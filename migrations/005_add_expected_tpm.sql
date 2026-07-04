@@ -1,0 +1,2 @@
+ALTER TABLE api_keys
+  ADD COLUMN expected_tpm BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER weight;

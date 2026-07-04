@@ -1,0 +1,3 @@
+实施这个设计
+建议
+1. new-api 配置仅增加KEYHUB_PUSH_TOKEN，其他的使用默认值，默认开启，默认userId=1
