@@ -2,10 +2,16 @@ bin/
 keyhub.exe
 dist/
 web/dist/
-web/node_modules/
+node_modules/
+outputs/
+.codex-*/
+*.tar
+*.tar.gz
 *.log
 *.err
 .env
+.env.*
+!.env.example
 .DS_Store
 backups/
 .idea/

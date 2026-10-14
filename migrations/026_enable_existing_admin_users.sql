@@ -1,0 +1,5 @@
+ALTER TABLE admin_users
+  MODIFY COLUMN disabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+UPDATE admin_users
+SET disabled = FALSE;

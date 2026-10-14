@@ -18,26 +18,31 @@ var (
 )
 
 type APIKeyRecord struct {
-	ID               int64     `json:"id"`
-	CategoryCode     string    `json:"categoryCode"`
-	KeyHint          string    `json:"keyHint"`
-	Region           string    `json:"region"`
-	BaseURL          string    `json:"baseUrl"`
-	Models           []string  `json:"models"`
-	Tag              string    `json:"tag"`
-	GroupName        string    `json:"groupName"`
-	Note             string    `json:"note"`
-	ExpectedTPM      int64     `json:"expectedTpm"`
-	UsageQuota30d    int64     `json:"usageQuota30d"`
-	UsageUSD30d      float64   `json:"usageUsd30d"`
-	Status           string    `json:"status"`
-	NewAPIChannelID  *int64    `json:"newApiChannelId,omitempty"`
-	LastSyncStatus   string    `json:"lastSyncStatus"`
-	LastHealthStatus string    `json:"lastHealthStatus"`
-	SuccessCount     int64     `json:"successCount"`
-	ErrorCount       int64     `json:"errorCount"`
-	LastError        string    `json:"lastError"`
-	CreatedAt        time.Time `json:"createdAt"`
+	ID                int64               `json:"id"`
+	CategoryCode      string              `json:"categoryCode"`
+	AWSCredentialType string              `json:"awsCredentialType,omitempty"`
+	KeyHint           string              `json:"keyHint"`
+	Region            string              `json:"region"`
+	BaseURL           string              `json:"baseUrl"`
+	Models            []string            `json:"models"`
+	Tag               string              `json:"tag"`
+	GroupName         string              `json:"groupName"`
+	Note              string              `json:"note"`
+	CreatedBy         string              `json:"createdBy"`
+	ExpectedTPM       int64               `json:"expectedTpm"`
+	UsageQuota30d     int64               `json:"usageQuota30d"`
+	UsageUSD30d       float64             `json:"usageUsd30d"`
+	Status            string              `json:"status"`
+	NewAPIChannelID   *int64              `json:"newApiChannelId,omitempty"`
+	PushBindings      []APIKeyPushBinding `json:"pushBindings,omitempty"`
+	LastSyncStatus    string              `json:"lastSyncStatus"`
+	LastHealthStatus  string              `json:"lastHealthStatus"`
+	SuccessCount      int64               `json:"successCount"`
+	ErrorCount        int64               `json:"errorCount"`
+	LastError         string              `json:"lastError"`
+	FirstUsedAt       *time.Time          `json:"firstUsedAt,omitempty"`
+	LastUsedAt        *time.Time          `json:"lastUsedAt,omitempty"`
+	CreatedAt         time.Time           `json:"createdAt"`
 }
 
 type DeletedAPIKeyRecord struct {
@@ -49,32 +54,44 @@ type DeletedAPIKeyRecord struct {
 }
 
 type APIKeyPushBinding struct {
-	APIKeyID        int64  `json:"apiKeyId"`
-	TargetCode      string `json:"targetCode"`
-	RemoteChannelID int64  `json:"remoteChannelId"`
-	Status          string `json:"status"`
+	APIKeyID              int64      `json:"apiKeyId"`
+	TargetCode            string     `json:"targetCode"`
+	RemoteChannelID       int64      `json:"remoteChannelId"`
+	Status                string     `json:"status"`
+	RemoteStatus          *int       `json:"remoteStatus,omitempty"`
+	RemoteStatusCheckedAt *time.Time `json:"remoteStatusCheckedAt,omitempty"`
 }
 
 type APIKeyForSync struct {
-	ID              int64
-	CategoryCode    string
-	CategoryLabel   string
-	NewAPIType      int
-	KeyCiphertext   string
-	KeyHint         string
-	Region          string
-	BaseURL         string
-	Models          []string
-	Tag             string
-	GroupName       string
-	Note            string
-	Status          string
-	NewAPIChannelID sql.NullInt64
+	ID                int64
+	CategoryCode      string
+	AWSCredentialType string
+	CreatedBy         string
+	CategoryLabel     string
+	NewAPIType        int
+	KeyCiphertext     string
+	KeyHint           string
+	Region            string
+	BaseURL           string
+	Models            []string
+	Tag               string
+	GroupName         string
+	Note              string
+	Status            string
+	NewAPIChannelID   sql.NullInt64
+}
+
+type APIKeySecret struct {
+	ID            int64
+	CategoryCode  string
+	KeyCiphertext string
+	KeyHint       string
 }
 
 type APIKeyList struct {
-	Items []APIKeyRecord `json:"items"`
-	Total int64          `json:"total"`
+	Items         []APIKeyRecord `json:"items"`
+	Total         int64          `json:"total"`
+	TotalUsageUSD float64        `json:"totalUsageUsd"`
 }
 
 type SyncEventRecord struct {
@@ -89,26 +106,28 @@ type SyncEventRecord struct {
 }
 
 type ImportAPIKey struct {
-	CategoryCode string
-	Ciphertext   string
-	Fingerprint  string
-	KeyHint      string
-	Region       string
-	BaseURL      string
-	Models       []string
-	Tag          string
-	GroupName    string
-	Note         string
-	ExpectedTPM  int64
-	Status       string
+	CategoryCode      string
+	AWSCredentialType string
+	Ciphertext        string
+	Fingerprint       string
+	KeyHint           string
+	Region            string
+	BaseURL           string
+	Models            []string
+	Tag               string
+	GroupName         string
+	Note              string
+	ExpectedTPM       int64
+	Status            string
 }
 
 type ImportResult struct {
-	BatchID    int64 `json:"batchId"`
-	Total      int   `json:"total"`
-	Imported   int   `json:"imported"`
-	Duplicates int   `json:"duplicates"`
-	Failed     int   `json:"failed"`
+	BatchID        int64   `json:"batchId"`
+	Total          int     `json:"total"`
+	Imported       int     `json:"imported"`
+	Duplicates     int     `json:"duplicates"`
+	Failed         int     `json:"failed"`
+	ImportedKeyIDs []int64 `json:"importedKeyIds"`
 }
 
 func LoadCategories(ctx context.Context, db *sql.DB) ([]keys.Category, error) {
@@ -189,11 +208,7 @@ func ImportKeys(ctx context.Context, db *sql.DB, categoryCode string, tag string
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("begin import: %w", err)
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	defer tx.Rollback()
 
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO key_import_batches
@@ -209,24 +224,15 @@ VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
 	}
 
 	imported := 0
+	importedKeyIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
-		modelsJSON, marshalErr := json.Marshal(row.Models)
-		if marshalErr != nil {
-			err = fmt.Errorf("marshal models: %w", marshalErr)
-			return ImportResult{}, err
+		keyID, duplicate, insertErr := insertImportedAPIKey(ctx, tx, batchID, actor, row)
+		if insertErr != nil {
+			return ImportResult{}, fmt.Errorf("insert api key: %w", insertErr)
 		}
-		insertResult, execErr := tx.ExecContext(ctx, `
-INSERT IGNORE INTO api_keys
-  (import_batch_id, category_code, key_ciphertext, key_fingerprint, key_hint, region, base_url, models_json, tag, group_name, note, created_by, expected_tpm, status)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			batchID, row.CategoryCode, row.Ciphertext, row.Fingerprint, row.KeyHint, row.Region, row.BaseURL, string(modelsJSON), row.Tag, row.GroupName, row.Note, actor, row.ExpectedTPM, row.Status)
-		if execErr != nil {
-			err = fmt.Errorf("insert api key: %w", execErr)
-			return ImportResult{}, err
-		}
-		affected, affectedErr := insertResult.RowsAffected()
-		if affectedErr == nil && affected > 0 {
+		if !duplicate {
 			imported++
+			importedKeyIDs = append(importedKeyIDs, keyID)
 		} else {
 			duplicates++
 		}
@@ -248,44 +254,73 @@ VALUES (?, 'keys.import', 'key_import_batch', ?, JSON_OBJECT('total', ?, 'import
 	}
 
 	return ImportResult{
-		BatchID:    batchID,
-		Total:      total,
-		Imported:   imported,
-		Duplicates: duplicates,
-		Failed:     failed,
+		BatchID:        batchID,
+		Total:          total,
+		Imported:       imported,
+		Duplicates:     duplicates,
+		Failed:         failed,
+		ImportedKeyIDs: importedKeyIDs,
 	}, nil
 }
 
-func ListAPIKeys(ctx context.Context, db *sql.DB, limit int, offset int, owner string) (APIKeyList, error) {
+func ListAPIKeys(ctx context.Context, db *sql.DB, limit int, offset int, owner string, includePushBindings bool) (APIKeyList, error) {
+	owners := []string{}
+	if strings.TrimSpace(owner) != "" {
+		owners = append(owners, owner)
+	}
+	return ListAPIKeysForOwners(ctx, db, limit, offset, owners, includePushBindings)
+}
+
+func ListAPIKeysForOwners(ctx context.Context, db *sql.DB, limit int, offset int, owners []string, includePushBindings bool) (APIKeyList, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	owner = strings.TrimSpace(owner)
+	cleanedOwners := make([]string, 0, len(owners))
+	seenOwners := make(map[string]struct{}, len(owners))
+	for _, owner := range owners {
+		owner = strings.TrimSpace(owner)
+		if owner == "" {
+			continue
+		}
+		if _, exists := seenOwners[owner]; exists {
+			continue
+		}
+		seenOwners[owner] = struct{}{}
+		cleanedOwners = append(cleanedOwners, owner)
+	}
 	where := ""
 	countArgs := []any{}
-	if owner != "" {
-		where = "WHERE created_by = ?"
-		countArgs = append(countArgs, owner)
+	if len(cleanedOwners) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(cleanedOwners)), ",")
+		where = "WHERE created_by IN (" + placeholders + ")"
+		for _, owner := range cleanedOwners {
+			countArgs = append(countArgs, owner)
+		}
 	}
 
 	result := APIKeyList{Items: []APIKeyRecord{}}
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM api_keys "+where, countArgs...).Scan(&result.Total); err != nil {
 		return result, fmt.Errorf("count api keys: %w", err)
 	}
-
-	usageSince := time.Now().AddDate(0, 0, -29).Format("2006-01-02")
-	queryArgs := []any{usageSince}
-	if owner != "" {
-		queryArgs = append(queryArgs, owner)
+	usageWhere := strings.Replace(where, "created_by", "k.created_by", 1)
+	if err := db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(latest_usage.usd_amount), 0)
+FROM (`+latestUsageSnapshotsSQL+`) latest_usage
+JOIN api_keys k ON k.id = latest_usage.api_key_id
+`+usageWhere, countArgs...).Scan(&result.TotalUsageUSD); err != nil {
+		return result, fmt.Errorf("sum api key usage: %w", err)
 	}
+
+	queryArgs := append([]any{}, countArgs...)
 	queryArgs = append(queryArgs, limit, offset)
 	rows, err := db.QueryContext(ctx, `
 SELECT
   k.id,
   k.category_code,
+  k.aws_credential_type,
   k.key_hint,
   k.region,
   k.base_url,
@@ -293,6 +328,7 @@ SELECT
   k.tag,
   k.group_name,
   k.note,
+  k.created_by,
   k.expected_tpm,
   COALESCE(u.usage_quota_30d, 0),
   COALESCE(u.usage_usd_30d, 0),
@@ -303,6 +339,8 @@ SELECT
   k.success_count,
   k.error_count,
   k.last_error,
+  k.first_used_at,
+  k.last_used_at,
   k.created_at
 FROM api_keys k
 LEFT JOIN (
@@ -310,8 +348,7 @@ LEFT JOIN (
     api_key_id,
     COALESCE(SUM(quota_amount), 0) AS usage_quota_30d,
     COALESCE(SUM(usd_amount), 0) AS usage_usd_30d
-  FROM usage_daily_snapshots
-  WHERE stat_date >= ? AND api_key_id IS NOT NULL
+  FROM (`+latestUsageSnapshotsSQL+`) latest_usage
   GROUP BY api_key_id
 ) u ON u.api_key_id = k.id
 `+strings.Replace(where, "created_by", "k.created_by", 1)+`
@@ -326,9 +363,12 @@ LIMIT ? OFFSET ?`, queryArgs...)
 		var item APIKeyRecord
 		var modelsJSON []byte
 		var newAPIChannelID sql.NullInt64
+		var firstUsedAt sql.NullTime
+		var lastUsedAt sql.NullTime
 		if err := rows.Scan(
 			&item.ID,
 			&item.CategoryCode,
+			&item.AWSCredentialType,
 			&item.KeyHint,
 			&item.Region,
 			&item.BaseURL,
@@ -336,6 +376,7 @@ LIMIT ? OFFSET ?`, queryArgs...)
 			&item.Tag,
 			&item.GroupName,
 			&item.Note,
+			&item.CreatedBy,
 			&item.ExpectedTPM,
 			&item.UsageQuota30d,
 			&item.UsageUSD30d,
@@ -346,12 +387,20 @@ LIMIT ? OFFSET ?`, queryArgs...)
 			&item.SuccessCount,
 			&item.ErrorCount,
 			&item.LastError,
+			&firstUsedAt,
+			&lastUsedAt,
 			&item.CreatedAt,
 		); err != nil {
 			return result, fmt.Errorf("scan api key: %w", err)
 		}
 		if newAPIChannelID.Valid {
 			item.NewAPIChannelID = &newAPIChannelID.Int64
+		}
+		if firstUsedAt.Valid {
+			item.FirstUsedAt = &firstUsedAt.Time
+		}
+		if lastUsedAt.Valid {
+			item.LastUsedAt = &lastUsedAt.Time
 		}
 		if err := json.Unmarshal(modelsJSON, &item.Models); err != nil {
 			return result, fmt.Errorf("parse key models: %w", err)
@@ -361,8 +410,67 @@ LIMIT ? OFFSET ?`, queryArgs...)
 	if err := rows.Err(); err != nil {
 		return result, fmt.Errorf("iterate api keys: %w", err)
 	}
+	if includePushBindings {
+		if err := loadAPIKeyPushBindingsForList(ctx, db, &result); err != nil {
+			return result, err
+		}
+	}
 
 	return result, nil
+}
+
+func loadAPIKeyPushBindingsForList(ctx context.Context, db *sql.DB, result *APIKeyList) error {
+	if result == nil || len(result.Items) == 0 {
+		return nil
+	}
+	indexByID := make(map[int64]int, len(result.Items))
+	placeholders := make([]string, 0, len(result.Items))
+	args := make([]any, 0, len(result.Items))
+	for index, item := range result.Items {
+		indexByID[item.ID] = index
+		placeholders = append(placeholders, "?")
+		args = append(args, item.ID)
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT api_key_id, target_code, remote_channel_id, status, remote_status, remote_status_checked_at
+FROM api_key_push_bindings
+WHERE api_key_id IN (`+strings.Join(placeholders, ",")+`) AND remote_channel_id > 0 AND status <> 'disabled'
+ORDER BY api_key_id ASC, target_code ASC`, args...)
+	if err != nil {
+		return fmt.Errorf("list api key push bindings: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var binding APIKeyPushBinding
+		var remoteStatus sql.NullInt64
+		var remoteStatusCheckedAt sql.NullTime
+		if err := rows.Scan(
+			&binding.APIKeyID,
+			&binding.TargetCode,
+			&binding.RemoteChannelID,
+			&binding.Status,
+			&remoteStatus,
+			&remoteStatusCheckedAt,
+		); err != nil {
+			return fmt.Errorf("scan api key push binding: %w", err)
+		}
+		if remoteStatus.Valid {
+			value := int(remoteStatus.Int64)
+			binding.RemoteStatus = &value
+		}
+		if remoteStatusCheckedAt.Valid {
+			value := remoteStatusCheckedAt.Time
+			binding.RemoteStatusCheckedAt = &value
+		}
+		if index, ok := indexByID[binding.APIKeyID]; ok {
+			result.Items[index].PushBindings = append(result.Items[index].PushBindings, binding)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate api key push bindings: %w", err)
+	}
+	return nil
 }
 
 func LoadAPIKeyForSync(ctx context.Context, db *sql.DB, id int64) (APIKeyForSync, error) {
@@ -372,8 +480,10 @@ func LoadAPIKeyForSync(ctx context.Context, db *sql.DB, id int64) (APIKeyForSync
 SELECT
   k.id,
   k.category_code,
-  r.category_label,
-  r.newapi_type,
+  k.aws_credential_type,
+  k.created_by,
+  '',
+  0,
   k.key_ciphertext,
   k.key_hint,
   k.region,
@@ -385,10 +495,11 @@ SELECT
   k.status,
   k.newapi_channel_id
 FROM api_keys k
-JOIN category_pool_rules r ON r.category_code = k.category_code
 WHERE k.id = ?`, id).Scan(
 		&item.ID,
 		&item.CategoryCode,
+		&item.AWSCredentialType,
+		&item.CreatedBy,
 		&item.CategoryLabel,
 		&item.NewAPIType,
 		&item.KeyCiphertext,
@@ -411,6 +522,41 @@ WHERE k.id = ?`, id).Scan(
 	return item, nil
 }
 
+func LoadAPIKeySecret(ctx context.Context, db *sql.DB, id int64) (APIKeySecret, error) {
+	var item APIKeySecret
+	err := db.QueryRowContext(ctx, `
+SELECT id, category_code, key_ciphertext, key_hint
+FROM api_keys
+WHERE id = ?`, id).Scan(
+		&item.ID,
+		&item.CategoryCode,
+		&item.KeyCiphertext,
+		&item.KeyHint,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, ErrAPIKeyNotFound
+	}
+	if err != nil {
+		return item, fmt.Errorf("load api key secret: %w", err)
+	}
+	return item, nil
+}
+
+func APIKeyBelongsToOwner(ctx context.Context, db *sql.DB, id int64, owner string) (bool, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return true, nil
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM api_keys
+WHERE id = ? AND created_by = ?`, id, owner).Scan(&count); err != nil {
+		return false, fmt.Errorf("check api key owner: %w", err)
+	}
+	return count > 0, nil
+}
+
 func MarkKeySyncSuccess(ctx context.Context, db *sql.DB, keyID int64, newAPIChannelID int64, status string) error {
 	_, err := db.ExecContext(ctx, `
 UPDATE api_keys
@@ -430,6 +576,8 @@ VALUES (?, ?, ?, ?, 'success', '', CURRENT_TIMESTAMP)
 ON DUPLICATE KEY UPDATE
   remote_channel_id = VALUES(remote_channel_id),
   status = VALUES(status),
+  remote_status = NULL,
+  remote_status_checked_at = NULL,
   last_sync_status = 'success',
   last_error = '',
   synced_at = CURRENT_TIMESTAMP`,
@@ -463,6 +611,22 @@ ORDER BY target_code ASC`, keyID)
 		return nil, fmt.Errorf("iterate api key push bindings: %w", err)
 	}
 	return items, nil
+}
+
+func GetActiveAPIKeyPushBinding(ctx context.Context, db *sql.DB, keyID int64, targetCode string) (APIKeyPushBinding, bool, error) {
+	var item APIKeyPushBinding
+	err := db.QueryRowContext(ctx, `
+SELECT api_key_id, target_code, remote_channel_id, status
+FROM api_key_push_bindings
+WHERE api_key_id = ? AND target_code = ? AND remote_channel_id > 0 AND status = 'active'
+LIMIT 1`, keyID, targetCode).Scan(&item.APIKeyID, &item.TargetCode, &item.RemoteChannelID, &item.Status)
+	if err == nil {
+		return item, true, nil
+	}
+	if err == sql.ErrNoRows {
+		return item, false, nil
+	}
+	return item, false, fmt.Errorf("get api key push binding: %w", err)
 }
 
 func MarkAPIKeyPushBindingDisabled(ctx context.Context, db *sql.DB, keyID int64, targetCode string) error {
@@ -620,6 +784,47 @@ LIMIT ?`, args...)
 		return nil, fmt.Errorf("iterate sync events: %w", err)
 	}
 	return events, nil
+}
+
+func ListFailedActivationTargetCodes(ctx context.Context, db *sql.DB, keyID int64) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `
+SELECT request_payload_json
+FROM newapi_sync_events
+WHERE api_key_id = ? AND action = 'activate' AND status = 'failed'
+ORDER BY id DESC
+LIMIT 200`, keyID)
+	if err != nil {
+		return nil, fmt.Errorf("list failed activation targets: %w", err)
+	}
+	defer rows.Close()
+
+	targetCodes := make([]string, 0)
+	seen := make(map[string]struct{})
+	for rows.Next() {
+		var requestJSON []byte
+		if err := rows.Scan(&requestJSON); err != nil {
+			return nil, fmt.Errorf("scan failed activation target: %w", err)
+		}
+		var payload struct {
+			TargetCode string `json:"targetCode"`
+		}
+		if len(requestJSON) == 0 || json.Unmarshal(requestJSON, &payload) != nil {
+			continue
+		}
+		targetCode := strings.TrimSpace(payload.TargetCode)
+		if targetCode == "" {
+			continue
+		}
+		if _, exists := seen[targetCode]; exists {
+			continue
+		}
+		seen[targetCode] = struct{}{}
+		targetCodes = append(targetCodes, targetCode)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate failed activation targets: %w", err)
+	}
+	return targetCodes, nil
 }
 
 func nullableJSON(value any) (any, error) {

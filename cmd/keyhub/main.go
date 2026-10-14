@@ -30,7 +30,7 @@ func main() {
 	defer db.Close()
 
 	if cfg.AutoMigrate {
-		if err := database.ApplyMigrations(ctx, db, cfg.MigrationsDir); err != nil {
+		if err := database.ApplyMigrations(ctx, db, cfg.MigrationsDir, cfg.NewAPIQuotaPerUSD); err != nil {
 			log.Fatalf("migrations: %v", err)
 		}
 	}
@@ -80,5 +80,10 @@ func main() {
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf("graceful shutdown failed: %v", err)
+	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cleanupCancel()
+	if err := app.Close(cleanupCtx); err != nil {
+		log.Printf("new-api reverse session cleanup failed: %v", err)
 	}
 }

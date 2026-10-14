@@ -82,12 +82,94 @@ export interface UsageSummary {
   channels: UsageChannelSummary[]
 }
 
+export interface UsageLogItem {
+  createdAt: number
+  type: number
+  channelId: number
+  modelName: string
+  quota: number
+  quotaUsd: number
+  promptTokens: number
+  completionTokens: number
+  cacheReadTokens: number
+  cacheCreationTokens: number
+  useTime: number
+  firstResponseTimeMs: number
+  isStream: boolean
+  requestId?: string
+  upstreamRequestId?: string
+  content?: string
+  streamStatus?: string
+  streamEndReason?: string
+}
+
+export interface UsageLogStats {
+  quota: number
+  quotaUsd: number
+  rpm: number
+  tpm: number
+}
+
+export interface UsageLogPage {
+  configured: boolean
+  message?: string
+  items: UsageLogItem[]
+  total: number
+  pageSize: number
+  nextCursor?: string
+  channels: number[]
+  stats: UsageLogStats
+}
+
+export interface UsageLogConfiguration {
+  configured: boolean
+  message?: string
+}
+
+export interface UsageLogQuery {
+  cursor?: string
+  pageSize?: number
+  type?: number
+  modelName?: string
+  startTimestamp?: number
+  endTimestamp?: number
+  channelId?: number
+  requestId?: string
+  upstreamRequestId?: string
+}
+
 export interface UsageSyncResult {
   synced: number
   baseline: number
   missing: number
+  remoteStatusChecked?: number
+  remoteStatusMissing?: number
+  failedTargets?: number
+  totalSyncedQuota?: number
+  totalSyncedUsd?: number
   totalDeltaQuota: number
   totalDeltaUsd: number
+  targetFailures?: Array<{
+    connectionMode: AggregationTargetConnectionMode
+    error: string
+  }>
+}
+
+export interface ModelGap {
+  id: number
+  providerType: string
+  modelName: string
+  rpmGap: number
+  tpmGap: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ModelGapInput {
+  providerType: string
+  modelName: string
+  rpmGap: number
+  tpmGap: number
 }
 
 export interface WorkerRunRecord {
@@ -105,6 +187,23 @@ export interface AuthUser {
   username: string
   displayName: string
   role: string
+}
+
+export interface AdminUser extends AuthUser {
+  createdByUserId?: number
+  createdByUsername?: string
+  inheritsAggregationTargets: boolean
+  disabled: boolean
+  aggregationTargetCodes: string[]
+  aggregationTargets: AdminUserAggregationTarget[]
+  uploadedKeyCount: number
+  totalUsageUsd: number
+  lastLoginAt?: string
+  createdAt: string
+}
+
+export interface AdminUserAggregationTarget {
+  targetCode: string
 }
 
 export interface AuthState {
@@ -205,13 +304,25 @@ export interface AggregationTarget {
   name: string
   baseUrl: string
   connectionMode?: AggregationTargetConnectionMode
-  default: boolean
+  channelType: AggregationTargetChannelType
+  models: string[]
+  reverseGroupName?: string
+  targetCount?: number
 }
 
-export type AggregationTargetConnectionMode = 'api' | 'new_api_reverse'
+export type AggregationTargetConnectionMode = 'api' | 'new_api_reverse' | 'token_supply'
+export type AggregationTargetChannelType =
+  | 'anthropic'
+  | 'aws_bedrock'
+  | 'aws_bedrock_new'
+  | 'openai'
+  | 'azure_openai'
+  | 'google_ai_studio'
+export type AWSBedrockCredentialType = 'ak_sk' | 'api_key'
 
 export interface AdminAggregationTarget extends AggregationTarget {
   enabled: boolean
+  isSystemDefault: boolean
   source: 'database' | 'env'
   hasToken: boolean
   reverseUsername?: string
@@ -222,19 +333,21 @@ export interface AdminAggregationTarget extends AggregationTarget {
 }
 
 export interface AggregationTargetInput {
-  code: string
   name: string
   baseUrl: string
   connectionMode: AggregationTargetConnectionMode
+  channelType: AggregationTargetChannelType
+  models: string[]
   token?: string
   reverseUsername?: string
+  reverseGroupName?: string
   reversePassword?: string
   enabled: boolean
-  default: boolean
+  isSystemDefault: boolean
 }
 
 export interface AggregationTargetContractCheckInput {
-  code: string
+  code?: string
   baseUrl: string
   token?: string
 }
@@ -245,7 +358,7 @@ export interface AggregationTargetContractCheckResult {
 }
 
 export interface AggregationTargetReverseAdminCheckInput {
-  code: string
+  code?: string
   baseUrl: string
   reverseUsername?: string
   reversePassword?: string
@@ -258,13 +371,28 @@ export interface AggregationTargetReverseAdminCheckResult {
   channelTotal: number
 }
 
+export interface AggregationTargetTokenSupplyCheckInput {
+  code?: string
+  baseUrl: string
+  reverseUsername?: string
+  reversePassword?: string
+}
+
+export interface AggregationTargetTokenSupplyCheckResult {
+  success: boolean
+  username: string
+  purchaseProvider: string
+  providerCount: number
+  apiKeyCount: number
+}
+
 export interface KeyImportRequest {
-  categoryCode: string
-  endpointUrl: string
   rawText: string
-  models: string[]
+  channelTypes?: AggregationTargetChannelType[]
+  awsCredentialType?: AWSBedrockCredentialType
+  awsBedrockRegions?: string[]
+  models?: string[]
   expectedTpm: number
-  note: string
 }
 
 export interface KeyImportResponse {
@@ -273,33 +401,54 @@ export interface KeyImportResponse {
   imported: number
   duplicates: number
   failed: number
+  importedKeyIds?: number[]
+}
+
+export interface APIKeyPushBinding {
+  apiKeyId: number
+  targetCode: string
+  remoteChannelId: number
+  status: string
+  remoteStatus?: number
+  remoteStatusCheckedAt?: string
 }
 
 export interface APIKeyRecord {
   id: number
   categoryCode: string
+  awsCredentialType?: AWSBedrockCredentialType
   keyHint: string
   region: string
   baseUrl: string
   models: string[]
   tag: string
   note: string
+  createdBy: string
   expectedTpm: number
   usageQuota30d: number
   usageUsd30d: number
   status: string
   newApiChannelId?: number
+  pushBindings?: APIKeyPushBinding[]
   lastSyncStatus: string
   lastHealthStatus: string
   successCount: number
   errorCount: number
   lastError: string
+  firstUsedAt?: string
+  lastUsedAt?: string
   createdAt: string
 }
 
 export interface APIKeyListResponse {
   items: APIKeyRecord[]
   total: number
+  totalUsageUsd: number
+}
+
+export interface APIKeyPlaintextResponse {
+  id: number
+  plaintext: string
 }
 
 export interface SyncEventRecord {
@@ -314,55 +463,69 @@ export interface SyncEventRecord {
 }
 
 export async function getDashboardSummary(): Promise<DashboardSummary> {
-  return getJSON('/api/dashboard/summary')
+  return getJSON('/dashboard/summary')
 }
 
 export async function getCategories(): Promise<Category[]> {
-  const response = await getJSON<{ items?: Category[] | null }>('/api/categories')
+  const response = await getJSON<{ items?: Category[] | null }>('/categories')
   return itemsOrEmpty(response.items)
 }
 
 export async function getAggregationTargets(): Promise<AggregationTarget[]> {
-  const response = await getJSON<{ items?: AggregationTarget[] | null }>('/api/aggregation-targets')
-  return itemsOrEmpty(response.items)
+  const response = await getJSON<{ items?: Array<Partial<AggregationTarget> & Pick<AggregationTarget, 'channelType'>> | null }>(
+    '/aggregation-targets',
+  )
+  return itemsOrEmpty(response.items).map((target) => ({
+    code: '',
+    name: '',
+    baseUrl: '',
+    models: [],
+    ...target,
+  }))
 }
 
 export async function listAdminAggregationTargets(): Promise<AdminAggregationTarget[]> {
-  const response = await getJSON<{ items?: AdminAggregationTarget[] | null }>('/api/admin/aggregation-targets')
+  const response = await getJSON<{ items?: AdminAggregationTarget[] | null }>('/admin/aggregation-targets')
   return itemsOrEmpty(response.items)
 }
 
-export async function createAggregationTarget(payload: AggregationTargetInput): Promise<{ success: boolean }> {
-  return postJSON('/api/admin/aggregation-targets', payload)
+export async function createAggregationTarget(payload: AggregationTargetInput): Promise<{ success: boolean; code: string }> {
+  return postJSON('/admin/aggregation-targets', payload)
 }
 
 export async function updateAggregationTarget(code: string, payload: AggregationTargetInput): Promise<{ success: boolean }> {
-  return putJSON(`/api/admin/aggregation-targets/${encodeURIComponent(code)}`, payload)
+  return putJSON(`/admin/aggregation-targets/${encodeURIComponent(code)}`, payload)
 }
 
 export async function deleteAggregationTarget(code: string): Promise<{ deleted: boolean }> {
-  return deleteJSON(`/api/admin/aggregation-targets/${encodeURIComponent(code)}`)
+  return deleteJSON(`/admin/aggregation-targets/${encodeURIComponent(code)}`)
 }
 
 export async function checkAggregationTargetContract(
   payload: AggregationTargetContractCheckInput,
 ): Promise<AggregationTargetContractCheckResult> {
-  return postJSON('/api/admin/aggregation-targets/check-contract', payload)
+  return postJSON('/admin/aggregation-targets/check-contract', payload)
 }
 
 export async function checkAggregationTargetReverseAdmin(
   payload: AggregationTargetReverseAdminCheckInput,
 ): Promise<AggregationTargetReverseAdminCheckResult> {
-  return postJSON('/api/admin/aggregation-targets/check-reverse-admin', payload)
+  return postJSON('/admin/aggregation-targets/check-reverse-admin', payload)
+}
+
+export async function checkAggregationTargetTokenSupply(
+  payload: AggregationTargetTokenSupplyCheckInput,
+): Promise<AggregationTargetTokenSupplyCheckResult> {
+  return postJSON('/admin/aggregation-targets/check-token-supply', payload)
 }
 
 export async function getChannelGroups(): Promise<ChannelGroup[]> {
-  const response = await getJSON<{ items?: ChannelGroup[] | null }>('/api/channels')
+  const response = await getJSON<{ items?: ChannelGroup[] | null }>('/channels')
   return itemsOrEmpty(response.items)
 }
 
 export async function listHealthChecks(): Promise<HealthCheckRecord[]> {
-  const response = await getJSON<{ items?: HealthCheckRecord[] | null }>('/api/health-checks?limit=50')
+  const response = await getJSON<{ items?: HealthCheckRecord[] | null }>('/health-checks?limit=50')
   return itemsOrEmpty(response.items)
 }
 
@@ -370,29 +533,71 @@ export async function runHealthChecks(payload: {
   autoDisable: boolean
   limit?: number
 }): Promise<HealthRunResult[]> {
-  const response = await postJSON<{ items?: HealthRunResult[] | null }>('/api/health-checks/run', payload)
+  const response = await postJSON<{ items?: HealthRunResult[] | null }>('/health-checks/run', payload)
   return itemsOrEmpty(response.items)
 }
 
 export async function getUsageSummary(days = 30): Promise<UsageSummary> {
-  return getJSON(`/api/usage/summary?days=${days}`)
+  return getJSON(`/usage/summary?days=${days}`)
+}
+
+export async function getUsageLogs(query: UsageLogQuery = {}): Promise<UsageLogPage> {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== '') {
+      params.set(key, String(value))
+    }
+  }
+  const suffix = params.size > 0 ? `?${params.toString()}` : ''
+  const response = await getJSON<Partial<UsageLogPage>>(`/usage-logs${suffix}`)
+  return {
+    configured: response.configured ?? false,
+    message: response.message,
+    items: itemsOrEmpty(response.items),
+    total: response.total ?? 0,
+    pageSize: response.pageSize ?? query.pageSize ?? 20,
+    nextCursor: response.nextCursor,
+    channels: itemsOrEmpty(response.channels),
+    stats: response.stats ?? { quota: 0, quotaUsd: 0, rpm: 0, tpm: 0 },
+  }
+}
+
+export async function getUsageLogConfiguration(): Promise<UsageLogConfiguration> {
+  const response = await getJSON<Partial<UsageLogConfiguration>>('/usage-logs/configuration')
+  return {
+    configured: response.configured ?? false,
+    message: response.message,
+  }
 }
 
 export async function syncUsage(): Promise<UsageSyncResult> {
-  return postJSON('/api/usage/sync', {})
+  return postJSON('/usage/sync', {})
+}
+
+export async function listModelGaps(): Promise<ModelGap[]> {
+  const response = await getJSON<{ items?: ModelGap[] | null }>('/model-gaps')
+  return itemsOrEmpty(response.items)
+}
+
+export async function createModelGap(payload: ModelGapInput): Promise<{ success: boolean; id: number }> {
+  return postJSON('/admin/model-gaps', payload)
+}
+
+export async function updateModelGap(id: number, payload: ModelGapInput): Promise<{ success: boolean }> {
+  return putJSON(`/admin/model-gaps/${id}`, payload)
 }
 
 export async function listWorkerRuns(): Promise<WorkerRunRecord[]> {
-  const response = await getJSON<{ items?: WorkerRunRecord[] | null }>('/api/workers/runs?limit=30')
+  const response = await getJSON<{ items?: WorkerRunRecord[] | null }>('/workers/runs?limit=30')
   return itemsOrEmpty(response.items)
 }
 
 export async function getSession(): Promise<AuthState> {
-  return getJSON('/api/auth/me')
+  return getJSON('/auth/me')
 }
 
 export async function login(payload: { username: string; password: string }): Promise<AuthState> {
-  return postJSON('/api/auth/login', payload)
+  return postJSON('/auth/login', payload)
 }
 
 export async function register(payload: {
@@ -400,53 +605,128 @@ export async function register(payload: {
   password: string
   displayName?: string
 }): Promise<AuthState> {
-  return postJSON('/api/auth/register', payload)
+  return postJSON('/auth/register', payload)
 }
 
 export async function logout(): Promise<{ success: boolean }> {
-  return postJSON('/api/auth/logout', {})
+  return postJSON('/auth/logout', {})
+}
+
+export async function listAdminUsers(): Promise<AdminUser[]> {
+  const response = await getJSON<{ items?: AdminUser[] | null }>('/admin/users')
+  return itemsOrEmpty(response.items)
+}
+
+export async function createAdminUser(payload: {
+  username: string
+  password: string
+  displayName?: string
+}): Promise<{ user: AdminUser }> {
+  return postJSON('/admin/users', payload)
+}
+
+export async function updateAdminUserAggregationTargets(
+  userId: number,
+  targets: AdminUserAggregationTarget[],
+): Promise<{ success: boolean; targets: AdminUserAggregationTarget[] }> {
+  return putJSON(`/admin/users/${userId}/aggregation-targets`, { targets })
+}
+
+export async function updateAdminUserStatus(
+  userId: number,
+  disabled: boolean,
+): Promise<{ success: boolean; disabled: boolean }> {
+  return putJSON(`/admin/users/${userId}/status`, { disabled })
+}
+
+export async function resetAdminUserPassword(
+  userId: number,
+  password: string,
+): Promise<{ success: boolean }> {
+  return putJSON(`/admin/users/${userId}/password`, { password })
+}
+
+export async function updateAdminUserRole(
+  userId: number,
+  role: 'user' | 'account_manager',
+): Promise<{ success: boolean; role: string }> {
+  return putJSON(`/admin/users/${userId}/role`, { role })
 }
 
 export async function listAuditLogs(): Promise<AuditLogRecord[]> {
-  const response = await getJSON<{ items?: AuditLogRecord[] | null }>('/api/audit/logs?limit=100')
+  const response = await getJSON<{ items?: AuditLogRecord[] | null }>('/audit/logs?limit=100')
   return itemsOrEmpty(response.items)
 }
 
 export async function getOpsStatus(): Promise<OpsStatus> {
-  return getJSON('/api/ops/status')
+  return getJSON('/ops/status')
 }
 
 export async function exportKeyInventory(): Promise<KeyExportRecord[]> {
-  const response = await getJSON<{ items?: KeyExportRecord[] | null }>('/api/keys/export?limit=5000')
+  const response = await getJSON<{ items?: KeyExportRecord[] | null }>('/keys/export?limit=5000')
   return itemsOrEmpty(response.items)
 }
 
 export async function importKeys(payload: KeyImportRequest): Promise<KeyImportResponse> {
-  return postJSON('/api/keys/import', payload)
+  return postJSON('/keys/import', payload)
 }
 
 export async function listAPIKeys(): Promise<APIKeyListResponse> {
-  const response = await getJSON<Partial<APIKeyListResponse> & { items?: APIKeyRecord[] | null }>('/api/keys?limit=100')
+  const response = await getJSON<Partial<APIKeyListResponse> & { items?: APIKeyRecord[] | null }>('/keys?limit=100')
   return {
     items: itemsOrEmpty(response.items),
     total: response.total ?? 0,
+    totalUsageUsd: response.totalUsageUsd ?? 0,
   }
 }
 
+export async function revealAPIKeyPlaintext(id: number): Promise<APIKeyPlaintextResponse> {
+  return postJSON(`/keys/${id}/plaintext`, {})
+}
+
 export async function activateKey(id: number, payload: { targetCode: string }): Promise<{ newApiChannelId: number; targetCode: string }> {
-  return postJSON(`/api/keys/${id}/activate`, payload)
+  return postJSON(`/keys/${id}/activate`, payload)
+}
+
+export async function activateKeyToAssociatedTargets(
+  id: number,
+  payload: { channelTypes?: AggregationTargetChannelType[] } = {},
+): Promise<{
+  activated: boolean
+  skipped: boolean
+  total: number
+  success: number
+  failed: number
+  newApiChannelIds?: number[]
+}> {
+  return postJSON(`/keys/${id}/activate-associated`, payload)
+}
+
+export interface KeyRetryPushResponse {
+  activated: boolean
+  skipped: boolean
+  total: number
+  success: number
+  failed: number
+  targetCodes: string[]
+  newApiChannelIds?: number[]
+  source: 'failed_events' | 'current_associations'
+}
+
+export async function retryKeyPush(id: number): Promise<KeyRetryPushResponse> {
+  return postJSON(`/keys/${id}/retry-push`, {})
 }
 
 export async function disableKey(id: number): Promise<{ disabled: boolean }> {
-  return postJSON(`/api/keys/${id}/disable`, {})
+  return postJSON(`/keys/${id}/disable`, {})
 }
 
 export async function deleteKey(id: number): Promise<{ deleted: boolean }> {
-  return deleteJSON(`/api/keys/${id}`)
+  return deleteJSON(`/keys/${id}`)
 }
 
 export async function listSyncEvents(): Promise<SyncEventRecord[]> {
-  const response = await getJSON<{ items?: SyncEventRecord[] | null }>('/api/sync/events?limit=20')
+  const response = await getJSON<{ items?: SyncEventRecord[] | null }>('/sync/events?limit=20')
   return itemsOrEmpty(response.items)
 }
 
@@ -454,8 +734,14 @@ function itemsOrEmpty<T>(items?: T[] | null): T[] {
   return Array.isArray(items) ? items : []
 }
 
+const apiBaseURL = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/api`
+
+function resolveAPIURL(url: string) {
+  return `${apiBaseURL}${url}`
+}
+
 async function getJSON<T>(url: string): Promise<T> {
-  const response = await fetch(url, { credentials: 'same-origin' })
+  const response = await fetch(resolveAPIURL(url), { credentials: 'same-origin' })
   if (!response.ok) {
     throw new Error(await readErrorMessage(response))
   }
@@ -463,7 +749,7 @@ async function getJSON<T>(url: string): Promise<T> {
 }
 
 async function postJSON<T>(url: string, payload: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(resolveAPIURL(url), {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -478,7 +764,7 @@ async function postJSON<T>(url: string, payload: unknown): Promise<T> {
 }
 
 async function putJSON<T>(url: string, payload: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(resolveAPIURL(url), {
     method: 'PUT',
     credentials: 'same-origin',
     headers: {
@@ -493,7 +779,7 @@ async function putJSON<T>(url: string, payload: unknown): Promise<T> {
 }
 
 async function deleteJSON<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(resolveAPIURL(url), {
     method: 'DELETE',
     credentials: 'same-origin',
   })
@@ -509,9 +795,32 @@ async function readErrorMessage(response: Response) {
     return `${response.status} ${response.statusText}`
   }
   try {
-    const payload = JSON.parse(text) as { error?: string; message?: string }
-    return payload.error || payload.message || text
+    const payload = JSON.parse(text) as { error?: string | { code?: string; message?: string }; message?: string }
+    return (typeof payload.error === 'string' ? payload.error : payload.error?.message) || payload.message || text
   } catch {
     return text
   }
+}
+
+export interface UserAPIToken {
+  id: number
+  name: string
+  prefix: string
+  expiresAt: string
+  revokedAt?: string
+  lastUsedAt?: string
+  createdAt: string
+}
+
+export async function listUserAPITokens(): Promise<UserAPIToken[]> {
+  const result = await getJSON<{ items: UserAPIToken[] }>('/account/api-tokens')
+  return result.items ?? []
+}
+
+export function createUserAPIToken(payload: { name: string; expiresInDays: number }) {
+  return postJSON<{ id: number; token: string; expiresAt: string; scope: string }>('/account/api-tokens', payload)
+}
+
+export function revokeUserAPIToken(id: number) {
+  return deleteJSON<{ revoked: boolean }>(`/account/api-tokens/${id}`)
 }

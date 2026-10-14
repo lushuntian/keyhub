@@ -4,45 +4,80 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"keyhub/internal/config"
 	"keyhub/internal/database"
 	"keyhub/internal/newapi"
 	"keyhub/internal/security"
+	"keyhub/internal/tokensupply"
 )
 
 const keyHubPushSource = "keyhub"
 
 func (s *Server) activateKey(ctx context.Context, keyID int64, targetCode string) (int64, string, error) {
+	return s.activateKeyWithName(ctx, keyID, targetCode, "")
+}
+
+func (s *Server) activateKeyWithName(ctx context.Context, keyID int64, targetCode string, channelName string) (int64, string, error) {
+	release, locked, err := database.AcquireAPILock(ctx, s.db, fmt.Sprintf("key-operation:%d", keyID), 5)
+	if err != nil {
+		return 0, targetCode, err
+	}
+	if !locked {
+		return 0, targetCode, fmt.Errorf("key operation in progress")
+	}
+	defer release()
 	keyRecord, err := database.LoadAPIKeyForSync(ctx, s.db, keyID)
 	if err != nil {
 		return 0, "", err
 	}
-	if keyRecord.Status == "active" && keyRecord.NewAPIChannelID.Valid {
-		return keyRecord.NewAPIChannelID.Int64, "", nil
-	}
-
-	encryptor, err := security.NewEncryptor(s.config.EncryptionKey)
-	if err != nil {
-		_ = database.MarkKeySyncFailure(ctx, s.db, keyID, err.Error())
-		return 0, "", err
-	}
-	plaintextKey, err := encryptor.Decrypt(keyRecord.KeyCiphertext)
-	if err != nil {
-		_ = database.MarkKeySyncFailure(ctx, s.db, keyID, err.Error())
-		return 0, "", err
+	if channelName != "" && keyRecord.Status != "inventory" && keyRecord.Status != "active" {
+		return 0, targetCode, fmt.Errorf("key no longer allows API publishing")
 	}
 	target, err := s.aggregationTarget(ctx, targetCode)
 	if err != nil {
 		_ = database.MarkKeySyncFailure(ctx, s.db, keyID, err.Error())
 		return 0, "", err
 	}
+	if binding, exists, err := database.GetActiveAPIKeyPushBinding(ctx, s.db, keyID, target.Code); err != nil {
+		_ = database.MarkKeySyncFailure(ctx, s.db, keyID, err.Error())
+		return 0, target.Code, err
+	} else if exists {
+		if channelName != "" {
+			if err := database.MarkKeySyncSuccess(ctx, s.db, keyID, binding.RemoteChannelID, "active"); err != nil {
+				return 0, target.Code, err
+			}
+		}
+		return binding.RemoteChannelID, target.Code, nil
+	}
 
-	payload := buildNewAPIChannelPayload(keyRecord, plaintextKey)
+	encryptor, err := security.NewEncryptor(s.config.EncryptionKey)
+	if err != nil {
+		_ = database.MarkKeySyncFailure(ctx, s.db, keyID, err.Error())
+		return 0, target.Code, err
+	}
+	plaintextKey, err := encryptor.Decrypt(keyRecord.KeyCiphertext)
+	if err != nil {
+		_ = database.MarkKeySyncFailure(ctx, s.db, keyID, err.Error())
+		return 0, target.Code, err
+	}
+
+	payload, err := s.buildTargetChannelPayload(ctx, keyRecord, plaintextKey, target)
+	if err != nil {
+		_ = database.MarkKeySyncFailure(ctx, s.db, keyID, err.Error())
+		return 0, target.Code, err
+	}
+	payload = applyAggregationTargetChannelSettings(target, payload)
+	if channelName != "" {
+		payload.Name = channelName
+		payload.Remark = nil
+	}
 	eventPayload := redactedChannelPayload(keyRecord, payload)
 	eventPayload["targetCode"] = target.Code
 	eventPayload["targetBaseUrl"] = target.BaseURL
 	eventPayload["connectionMode"] = normalizeAggregationTargetConnectionModeOrAPI(target.ConnectionMode)
+	eventPayload["channelType"] = normalizeAggregationTargetChannelTypeOrDefault(target.ChannelType)
 	externalID := fmt.Sprintf("api_key:%d", keyID)
 	if err := database.InsertSyncEvent(ctx, s.db, &keyID, "activate", "pending", eventPayload, nil, ""); err != nil {
 		return 0, target.Code, err
@@ -78,7 +113,8 @@ func (s *Server) activateKey(ctx context.Context, keyID int64, targetCode string
 func (s *Server) createTargetChannel(ctx context.Context, target config.AggregationTarget, externalID string, payload newapi.ChannelPayload) (newapi.PushChannelResponse, error) {
 	switch normalizeAggregationTargetConnectionModeOrAPI(target.ConnectionMode) {
 	case aggregationTargetConnectionModeNewAPIReverse:
-		client, err := newapi.NewReverseClient(target.BaseURL, target.ReverseUsername, target.ReversePassword)
+		payload = applyAggregationTargetChannelSettings(target, payload)
+		client, err := s.reverseClientForTarget(ctx, target)
 		if err != nil {
 			return newapi.PushChannelResponse{}, err
 		}
@@ -88,8 +124,36 @@ func (s *Server) createTargetChannel(ctx context.Context, target config.Aggregat
 		}
 		response.ExternalID = externalID
 		return response, nil
+	case aggregationTargetConnectionModeTokenSupply:
+		client, err := tokensupply.NewClient(target.BaseURL, target.ReverseUsername, target.ReversePassword)
+		if err != nil {
+			return newapi.PushChannelResponse{}, err
+		}
+		providerSlug, err := tokenSupplyProviderSlug(payload.Type)
+		if err != nil {
+			return newapi.PushChannelResponse{}, err
+		}
+		description := strings.TrimSpace(payload.Name)
+		if payload.Remark != nil && strings.TrimSpace(*payload.Remark) != "" {
+			description = strings.TrimSpace(*payload.Remark)
+		}
+		record, err := client.AddAPIKey(ctx, tokensupply.AddAPIKeyRequest{
+			APIKey:        payload.Key,
+			ProviderSlug:  providerSlug,
+			HasQuotaLimit: 0,
+			Description:   description,
+			BizDate:       time.Now().Format("20060102"),
+		})
+		if err != nil {
+			return newapi.PushChannelResponse{}, err
+		}
+		return newapi.PushChannelResponse{
+			ChannelID:  tokensupply.RemoteIDNumber(record.ID),
+			Action:     "created",
+			ExternalID: externalID,
+		}, nil
 	default:
-		if err := s.validateAggregationTargetCapabilities(ctx, target.Code, target.BaseURL, target.Token); err != nil {
+		if err := s.validateAggregationTargetCapabilities(ctx, target.BaseURL, target.Token); err != nil {
 			return newapi.PushChannelResponse{}, err
 		}
 		client, err := newapi.NewPushClient(target.BaseURL, target.Token)
@@ -100,7 +164,39 @@ func (s *Server) createTargetChannel(ctx context.Context, target config.Aggregat
 	}
 }
 
+func applyAggregationTargetChannelSettings(target config.AggregationTarget, payload newapi.ChannelPayload) newapi.ChannelPayload {
+	if normalizeAggregationTargetConnectionModeOrAPI(target.ConnectionMode) == aggregationTargetConnectionModeNewAPIReverse {
+		payload.Group = normalizeAggregationTargetReverseGroupName(target.ReverseGroupName)
+	}
+	return payload
+}
+
+func tokenSupplyProviderSlug(channelType int) (string, error) {
+	switch channelType {
+	case 1:
+		return "openai", nil
+	case 3:
+		return "azure", nil
+	case 14:
+		return "anthropic", nil
+	case 24:
+		return "google-vertex", nil
+	case 33:
+		return "amazon-bedrock", nil
+	default:
+		return "", fmt.Errorf("tokensupply provider mapping is not configured for channel type %d", channelType)
+	}
+}
+
 func (s *Server) disableKey(ctx context.Context, keyID int64) error {
+	release, locked, lockErr := database.AcquireAPILock(ctx, s.db, fmt.Sprintf("key-operation:%d", keyID), 5)
+	if lockErr != nil {
+		return lockErr
+	}
+	if !locked {
+		return fmt.Errorf("key operation in progress")
+	}
+	defer release()
 	keyRecord, err := database.LoadAPIKeyForSync(ctx, s.db, keyID)
 	if err != nil {
 		return err
@@ -201,16 +297,25 @@ func (s *Server) decryptKeyPlaintext(keyRecord database.APIKeyForSync) (string, 
 func (s *Server) disableTargetChannel(ctx context.Context, keyRecord database.APIKeyForSync, target config.AggregationTarget, remoteChannelID int64, plaintextKey string) error {
 	switch normalizeAggregationTargetConnectionModeOrAPI(target.ConnectionMode) {
 	case aggregationTargetConnectionModeNewAPIReverse:
-		client, err := newapi.NewReverseClient(target.BaseURL, target.ReverseUsername, target.ReversePassword)
+		client, err := s.reverseClientForTarget(ctx, target)
 		if err != nil {
 			return err
 		}
 		return client.DisableChannel(ctx, remoteChannelID)
+	case aggregationTargetConnectionModeTokenSupply:
+		client, err := tokensupply.NewClient(target.BaseURL, target.ReverseUsername, target.ReversePassword)
+		if err != nil {
+			return err
+		}
+		return client.DeleteAPIKeyByRemoteID(ctx, remoteChannelID)
 	default:
 		if strings.TrimSpace(plaintextKey) == "" {
 			return fmt.Errorf("api key plaintext is required for API 接收平台下线")
 		}
-		payload := buildNewAPIChannelPayload(keyRecord, plaintextKey)
+		payload, err := s.buildTargetChannelPayload(ctx, keyRecord, plaintextKey, target)
+		if err != nil {
+			return err
+		}
 		payload.ID = remoteChannelID
 		client, err := newapi.NewPushClient(target.BaseURL, target.Token)
 		if err != nil {

@@ -13,6 +13,7 @@ func (s *Server) StartWorkers(ctx context.Context) {
 	if !s.config.WorkerEnabled {
 		return
 	}
+	go s.runAPIImportWorker(ctx)
 	s.startWorker(ctx, "health_check", s.config.HealthCheckEvery, func(ctx context.Context) (any, error) {
 		return s.runHealthChecks(ctx, true, 200)
 	})

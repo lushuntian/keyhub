@@ -4,6 +4,11 @@
 
 KeyHub 在“我的秘钥”页面点击“上线”后，会把选中的秘钥渠道推送到接收平台。接收平台必须实现 KeyHub 接入接口；如果缺少任一必选接口，KeyHub 会拒绝保存或拒绝上线该平台。
 
+除标准接口外，KeyHub 还内置了两类兼容模式：
+
+- `new-api逆向`：使用 new-api 管理员账号登录后台并调用 `/api/channel/`。
+- `采购供应商`：使用 `z.tokensupply.cc` 这类供应商后台的 `/api/apikey/*` 接口录入和管理 ApiKey。
+
 ## 必选接口
 
 ### 接收或更新渠道
@@ -22,9 +27,9 @@ Content-Type: application/json
   "external_id": "api_key:21",
   "operation": "upsert",
   "channel": {
-    "type": 18,
+    "type": 33,
     "key": "ak|sk|region",
-    "name": "keyhub-aws_bedrock-21",
+    "name": "supplier_aws_bedrock",
     "models": "claude-opus-4-6,claude-opus-4-7",
     "status": 2,
     "tag": "aws_bedrock"
@@ -91,16 +96,47 @@ KeyHub 在新增或编辑接收平台时会调用该接口做握手校验；接�
 - 重启 new-api，使 Token 生效。
 - new-api 必须同时实现 `POST /api/keyhub/channels` 和 `GET /api/keyhub/channels/usage`。
 - new-api 接收到渠道后会按 KeyHub 绑定关系创建或更新 channel。
-- 上线后的 channel 默认禁用，默认分组为 `default`，需要在 new-api 中确认后再启用。
+- 上线后的 channel 默认启用，默认分组为 `default`。
 
 ## KeyHub 配置方法
 
 - 打开“接收平台”页面，点击“新增平台”。
-- 标识建议使用 `new-api`，名称填写便于识别的环境名。
+- 名称填写便于识别的环境名；平台 ID 由系统自动生成。
+- 渠道类型选择该平台要接收的供应商类型，例如 Anthropic、旧版 AWS Bedrock、新版 AWS Bedrock、OpenAI、Azure OpenAI 或 Google AI Studio。
+- 模型列表由管理员在接收平台中手动维护，可输入多个模型；同步时严格以该平台的模型列表为准。
 - 平台地址填写 new-api 基础地址，不需要填写 `/api/keyhub/channels`。
 - Token 填写与 new-api `KEYHUB_PUSH_TOKEN` 一致的值。
-- 勾选“启用”后，该平台才会出现在上线弹窗中；勾选“默认”后会作为默认选择。
+- 勾选“启用”后，该平台才允许接入；用户是否能向该平台入库由“用户管理”中的接收平台关联决定。
+- “系统默认接收平台”同一时间最多只能配置一个，且必须使用 `new-api逆向` 接入方式；“使用日志”会实时读取该平台，但该配置仍不参与秘钥分配、上线或路由逻辑。
+- “使用日志”对所有登录用户开放：普通用户仅可查询本人秘钥对应的上游渠道，账号管理员可查询自己及直属下属用户秘钥对应的上游渠道，系统管理员可查询全部已映射渠道。
+- 管理员可为每个用户关联零个、一个或多个接收平台；未关联任何已启用平台的用户不能上传秘钥。
+- 用户关联多个平台时，上传页只展示去重后的渠道类型，不展示平台名称；用户可选择一种、多种或全选。
+- 密钥会自动入库到所有匹配用户所选渠道类型的已启用关联平台。
 - KeyHub 后端需要保持稳定的 `KEYHUB_ENCRYPTION_KEY`，用于加密保存平台 Token 和秘钥正文。
+
+## 采购供应商模式
+
+`z.tokensupply.cc` 的 ApiKey 录入接口如下：
+
+```http
+POST /api/apikey/add
+x-provider-user: <username>
+Content-Type: application/json
+```
+
+KeyHub 发送的主要字段：
+
+```json
+{
+  "api_key": "sk-...",
+  "provider_slug": "anthropic",
+  "has_quota_limit": 0,
+  "description": "username_anthropic",
+  "biz_date": "20260705"
+}
+```
+
+平台返回字符串 `id`，KeyHub 会稳定映射为本地数字发布 ID。消费同步读取 `GET /api/apikey/list` 的 `actual_cost`，并按 `KEYHUB_NEWAPI_QUOTA_PER_USD` 转换为累计 quota。
 
 ## 上线流程
 
@@ -112,10 +148,20 @@ KeyHub 在新增或编辑接收平台时会调用该接口做握手校验；接�
 
 ## 秘钥形态兼容
 
-- OpenAI、Anthropic、Gemini 等单 Key 渠道会按单个秘钥推送。
-- AWS Bedrock 支持 `AccessKey|SecretKey|Region` 或 `ApiKey|Region` 形态。
-- Azure OpenAI 会拆分 `Endpoint|ApiKey|ApiVersion`，并写入 channel 的地址、秘钥和额外参数。
-- 模型、端点、预估 TPM、备注等字段会尽量映射到 new-api channels 表的对应参数。
+- 用户不需要查看或选择具体平台；关联多个平台时只选择去重后的渠道类型，每个非空行作为一条完整秘钥原文保存。
+- 选择渠道类型后，上传页会读取任一个匹配接收平台的模型列表供用户编辑，同时仍隐藏具体平台信息。
+- 用户未编辑模型列表时，每个接收平台继续使用自身配置的模型；用户编辑后，本次导入创建的所有匹配上游渠道都使用编辑后的模型列表。
+- 本次所选渠道类型包含旧版 AWS Bedrock 时，用户必须选择 `AccessKey / SecretAccessKey` 或 `API Key` 密钥类型。前者按 `AccessKey|SecretAccessKey|Region` 校验，后者按 `APIKey|Region` 校验。
+- 新版 AWS Bedrock 与其他非旧版 AWS Bedrock 渠道不检查秘钥前缀、长度或供应商格式，也不会拆分 `|` 分隔的内容。
+- 选择新版 AWS Bedrock 时必须填写至少一行区域地址，每行必须以 `https://bedrock-mantle` 开头。
+- 新版 AWS Bedrock 按“区域 × 秘钥”展开入库；例如 2 个区域和 3 个秘钥会创建 6 条记录并向每个匹配的接收平台创建 6 个渠道。
+- 使用 `new-api 逆向`接收平台创建新版 AWS Bedrock 渠道时，区域地址会作为渠道的 `base_url` 参数。
+- 创建新版 AWS Bedrock 的 new-api 渠道时会自动生成 `model_mapping` JSON 字符串，将最终模型列表中的每个模型映射到 `anthropic.${模型ID}`。
+- 上线时使用接收平台配置的渠道类型生成 new-api `type`，并把该平台手动配置的模型列表和秘钥原文写入渠道参数。
+- 旧版 AWS Bedrock 使用 new-api `type=33`，并把用户选择转换为 `settings.aws_key_type`。
+- 新版 AWS Bedrock 使用 Anthropic 的 new-api `type=14` 和 payload 结构，不写入 AWS 设置；渠道名称使用 `${用户名}_aws_bedrock_new`。
+- 渠道名称为 `${用户名}_${渠道类型}`。
+- 除新版 AWS Bedrock 的 `new-api 逆向`渠道外，渠道同步不发送 `base_url`，接收平台按 `type` 使用对应渠道类型的内置地址。
 
 ## 常见问题
 

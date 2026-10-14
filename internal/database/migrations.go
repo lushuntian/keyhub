@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-func ApplyMigrations(ctx context.Context, db *sql.DB, dir string) error {
+func ApplyMigrations(ctx context.Context, db *sql.DB, dir string, quotaPerUSD float64) error {
+	if quotaPerUSD <= 0 {
+		quotaPerUSD = 500000
+	}
 	if _, err := db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version VARCHAR(128) PRIMARY KEY,
@@ -42,7 +45,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 		if applied {
 			continue
 		}
-		if err := applyMigrationFile(ctx, db, filepath.Join(dir, file), file); err != nil {
+		if err := applyMigrationFile(ctx, db, filepath.Join(dir, file), file, quotaPerUSD); err != nil {
 			return err
 		}
 	}
@@ -62,7 +65,7 @@ func migrationApplied(ctx context.Context, db *sql.DB, version string) (bool, er
 	return true, nil
 }
 
-func applyMigrationFile(ctx context.Context, db *sql.DB, path string, version string) error {
+func applyMigrationFile(ctx context.Context, db *sql.DB, path string, version string, quotaPerUSD float64) error {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read migration %s: %w", version, err)
@@ -78,6 +81,10 @@ func applyMigrationFile(ctx context.Context, db *sql.DB, path string, version st
 			_ = tx.Rollback()
 		}
 	}()
+
+	if _, err = tx.ExecContext(ctx, "SET @keyhub_quota_per_usd = ?", quotaPerUSD); err != nil {
+		return fmt.Errorf("set migration units for %s: %w", version, err)
+	}
 
 	for _, statement := range statements {
 		if _, err = tx.ExecContext(ctx, statement); err != nil {

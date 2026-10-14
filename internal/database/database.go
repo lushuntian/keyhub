@@ -6,11 +6,16 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysql "github.com/go-sql-driver/mysql"
 )
 
 func Open(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := sql.Open("mysql", dsn)
+	utcDSN, err := normalizeDSNToUTC(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("configure mysql: %w", err)
+	}
+
+	db, err := sql.Open("mysql", utcDSN)
 	if err != nil {
 		return nil, fmt.Errorf("open mysql: %w", err)
 	}
@@ -27,4 +32,23 @@ func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 	}
 
 	return db, nil
+}
+
+// normalizeDSNToUTC keeps MySQL's TIMESTAMP conversion and Go's time parsing in
+// the same timezone. API timestamps are then serialized as UTC and converted to
+// the user's timezone only by the frontend.
+func normalizeDSNToUTC(dsn string) (string, error) {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parse DSN: %w", err)
+	}
+
+	cfg.ParseTime = true
+	cfg.Loc = time.UTC
+	if cfg.Params == nil {
+		cfg.Params = make(map[string]string)
+	}
+	cfg.Params["time_zone"] = "'+00:00'"
+
+	return cfg.FormatDSN(), nil
 }

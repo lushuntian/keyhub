@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS model_gaps (
+  id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  provider_type VARCHAR(64) NOT NULL,
+  model_name VARCHAR(128) NOT NULL,
+  rpm_gap BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  tpm_gap BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_model_gaps_rpm_tpm (rpm_gap, tpm_gap),
+  INDEX idx_model_gaps_provider_model (provider_type, model_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

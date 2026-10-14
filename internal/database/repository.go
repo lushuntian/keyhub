@@ -55,7 +55,7 @@ FROM api_keys `+keyWhere, keyArgs...).Scan(&summary.TotalKeys, &summary.ActiveKe
 		return summary, fmt.Errorf("load dashboard key totals: %w", err)
 	}
 
-	usageSQL := "SELECT COALESCE(SUM(u.usd_amount), 0) FROM usage_daily_snapshots u"
+	usageSQL := "SELECT COALESCE(SUM(u.usd_amount), 0) FROM (" + latestUsageSnapshotsSQL + ") u"
 	usageArgs := []any{}
 	if owner != "" {
 		usageSQL += " JOIN api_keys k ON k.id = u.api_key_id WHERE k.created_by = ?"
@@ -119,7 +119,11 @@ SELECT
   COALESCE(SUM(CASE WHEN k.status IN ('disabled', 'error', 'revoked') THEN 1 ELSE 0 END), 0) AS disabled_count,
   COALESCE(SUM(u.usd_amount), 0) AS used_usd
 FROM api_keys k
-LEFT JOIN usage_daily_snapshots u ON u.api_key_id = k.id
+LEFT JOIN (
+  SELECT api_key_id, COALESCE(SUM(usd_amount), 0) AS usd_amount
+  FROM (`+latestUsageSnapshotsSQL+`) latest_usage
+  GROUP BY api_key_id
+) u ON u.api_key_id = k.id
 `+where+`
 GROUP BY k.category_code, COALESCE(NULLIF(k.tag, ''), '未标记')
 ORDER BY k.category_code, tag`, args...)

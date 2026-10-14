@@ -1,0 +1,974 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "KeyHub 用户 API",
+    "version": "1.0.0",
+    "description": "用户批量上传供应商密钥并发布到关联平台。Token 在页面“API 访问”创建。所有接口仅作用于 Token 所属用户；不提供管理权限。默认限制每用户每分钟 120 次读取、10 次写入。"
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "根路径部署；子路径部署请修改为 /你的前缀/api/v1"
+    }
+  ],
+  "security": [
+    {
+      "KeyHubToken": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "密钥导入"
+    }
+  ],
+  "paths": {
+    "/key-options": {
+      "get": {
+        "tags": [
+          "密钥导入"
+        ],
+        "operationId": "getKeyOptions",
+        "summary": "读取可选渠道和限额",
+        "responses": {
+          "200": {
+            "description": "用户可使用的渠道选项",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KeyOptions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求格式、参数或批量大小无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token 无效、过期、撤销或用户禁用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无渠道权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP 方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等冲突或请求正在处理",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "用户级限流",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "重试前等待秒数，限流时为 60"
+              }
+            }
+          },
+          "500": {
+            "description": "内部错误；提交重试必须沿用幂等标识",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "服务配置不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/key-imports": {
+      "post": {
+        "tags": [
+          "密钥导入"
+        ],
+        "operationId": "createKeyImport",
+        "summary": "提交密钥与持久化发布任务",
+        "description": "首次提交返回 202；相同用户、相同 Idempotency-Key 与规范化请求返回原批次当前结果（200）。密钥与发布任务在一个事务中保存。重复密钥跳过，不暴露已有密钥 ID。远端发布异步进行。请求体上限 2 MiB。",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "description": "新批次生成一次并持久保存。重试保持标识、输入及数组顺序不变。相同标识不同参数返回 409。",
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_.:-]{8,128}$",
+              "minLength": 8,
+              "maxLength": 128
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyImportRequest"
+              },
+              "examples": {
+                "anthropic": {
+                  "summary": "anthropic",
+                  "value": {
+                    "keys": [
+                      "SUPPLIER_KEY"
+                    ],
+                    "channelTypes": [
+                      "anthropic"
+                    ]
+                  }
+                },
+                "openai": {
+                  "summary": "openai",
+                  "value": {
+                    "keys": [
+                      "SUPPLIER_KEY"
+                    ],
+                    "channelTypes": [
+                      "openai"
+                    ]
+                  }
+                },
+                "azure_openai": {
+                  "summary": "azure_openai",
+                  "value": {
+                    "keys": [
+                      "SUPPLIER_KEY"
+                    ],
+                    "channelTypes": [
+                      "azure_openai"
+                    ]
+                  }
+                },
+                "google_ai_studio": {
+                  "summary": "google_ai_studio",
+                  "value": {
+                    "keys": [
+                      "SUPPLIER_KEY"
+                    ],
+                    "channelTypes": [
+                      "google_ai_studio"
+                    ]
+                  }
+                },
+                "aws_bedrock": {
+                  "summary": "aws_bedrock",
+                  "value": {
+                    "keys": [
+                      "ACCESS_KEY|SECRET_KEY|us-east-1"
+                    ],
+                    "channelTypes": [
+                      "aws_bedrock"
+                    ],
+                    "awsCredentialType": "ak_sk"
+                  }
+                },
+                "aws_bedrock_new": {
+                  "summary": "aws_bedrock_new",
+                  "value": {
+                    "keys": [
+                      "SUPPLIER_KEY"
+                    ],
+                    "channelTypes": [
+                      "aws_bedrock_new"
+                    ],
+                    "awsBedrockRegions": [
+                      "https://bedrock-mantle.us-east-1.api.aws"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "幂等重放；返回原批次当前状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportJob"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "已持久化；不代表已完成远端发布",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求格式、参数或批量大小无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token 无效、过期、撤销或用户禁用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无渠道权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP 方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等冲突或请求正在处理",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "用户级限流",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "重试前等待秒数，限流时为 60"
+              }
+            }
+          },
+          "500": {
+            "description": "内部错误；提交重试必须沿用幂等标识",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "服务配置不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/key-imports/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "密钥导入"
+        ],
+        "operationId": "getKeyImport",
+        "summary": "查询本人批次",
+        "description": "建议每 3–5 秒轮询；pending 为 0 后判断最终结果。只返回脱敏结果，无平台名称、地址、凭据或密钥原文。",
+        "responses": {
+          "200": {
+            "description": "批次状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求格式、参数或批量大小无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token 无效、过期、撤销或用户禁用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无渠道权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP 方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等冲突或请求正在处理",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "用户级限流",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "重试前等待秒数，限流时为 60"
+              }
+            }
+          },
+          "500": {
+            "description": "内部错误；提交重试必须沿用幂等标识",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "服务配置不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/key-imports/{id}/retry": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "密钥导入"
+        ],
+        "operationId": "retryKeyImport",
+        "summary": "重试失败项或重新核查不确定结果",
+        "description": "无需请求体和 Idempotency-Key。failed 转为 pending；needs_review 转为 reconcile_pending（只查询远端，不重复创建）。成功和正在处理的项保持不变。任务执行前重新校验用户和平台权限。",
+        "responses": {
+          "202": {
+            "description": "已安排重试或核查，返回当前批次状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求格式、参数或批量大小无效",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token 无效、过期、撤销或用户禁用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "无渠道权限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "不存在或不属于当前用户",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "HTTP 方法不支持",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等冲突或请求正在处理",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "用户级限流",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "重试前等待秒数，限流时为 60"
+              }
+            }
+          },
+          "500": {
+            "description": "内部错误；提交重试必须沿用幂等标识",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "服务配置不可用",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "KeyHubToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "kh_<32 random bytes encoded as base64url>",
+        "description": "在页面“API 访问”创建。不是供应商密钥，不接受 Cookie。"
+      }
+    },
+    "schemas": {
+      "ChannelType": {
+        "type": "string",
+        "enum": [
+          "anthropic",
+          "openai",
+          "azure_openai",
+          "google_ai_studio",
+          "aws_bedrock",
+          "aws_bedrock_new"
+        ]
+      },
+      "KeyImportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "keys",
+          "channelTypes"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "description": "每项为单行不透明密钥，最大 8192 字节（服务端按字节校验），首尾空白会去除。"
+          },
+          "channelTypes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/ChannelType"
+            },
+            "description": "显式选择获准使用的类型；新版 AWS 只能单独提交。"
+          },
+          "models": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "非空数组覆盖所有发布渠道；省略或空数组使用各平台模型。标识最大 128 字节。"
+          },
+          "awsCredentialType": {
+            "type": "string",
+            "enum": [
+              "ak_sk",
+              "api_key"
+            ],
+            "description": "仅旧版 AWS 必填：AccessKey|SecretAccessKey|Region 或 APIKey|Region。"
+          },
+          "awsBedrockRegions": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "maxLength": 512,
+              "pattern": "^https://bedrock-mantle"
+            },
+            "description": "仅新版 AWS 必填。去重后按区域×密钥展开，最多 100 条记录、500 个发布任务。"
+          }
+        }
+      },
+      "KeyOptions": {
+        "type": "object",
+        "required": [
+          "items",
+          "limits",
+          "publishingEnabled"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "channelType",
+                "targetCount"
+              ],
+              "properties": {
+                "channelType": {
+                  "$ref": "#/components/schemas/ChannelType"
+                },
+                "models": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "同类型任一匹配平台的示例模型，不是全部平台模型并集"
+                },
+                "targetCount": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          },
+          "limits": {
+            "type": "object",
+            "required": [
+              "maxKeys",
+              "maxExpandedKeys",
+              "maxPublishTasks",
+              "readRequestsPerMinute",
+              "writeRequestsPerMinute"
+            ],
+            "properties": {
+              "maxKeys": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "100"
+              },
+              "maxExpandedKeys": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "100"
+              },
+              "maxPublishTasks": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "500"
+              },
+              "readRequestsPerMinute": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "120"
+              },
+              "writeRequestsPerMinute": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "10"
+              }
+            }
+          },
+          "publishingEnabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ImportJob": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "createdAt",
+          "total",
+          "imported",
+          "duplicates",
+          "publishTotal",
+          "succeeded",
+          "failed",
+          "needsReview",
+          "pending",
+          "items"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "partial_failed",
+              "failed",
+              "needs_review"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "区域展开后的记录总数"
+          },
+          "imported": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "新增本地密钥数"
+          },
+          "duplicates": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "跳过的重复记录数"
+          },
+          "publishTotal": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "发布任务总数，按记录×平台计数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "成功发布数"
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "可安全重试的失败数"
+          },
+          "needsReview": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "远端结果不确定数"
+          },
+          "pending": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "等待执行、正在执行和等待核查的任务数"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportItem"
+            }
+          }
+        }
+      },
+      "ImportItem": {
+        "type": "object",
+        "required": [
+          "inputIndex",
+          "importStatus",
+          "deliveries"
+        ],
+        "properties": {
+          "inputIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "原始 keys 数组的下标，从 0 开始"
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "新版 AWS 的输入区域地址；普通渠道省略"
+          },
+          "keyId": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1,
+            "description": "本地新建密钥 ID；重复项或之后已删除的密钥省略"
+          },
+          "importStatus": {
+            "type": "string",
+            "enum": [
+              "imported",
+              "duplicate"
+            ]
+          },
+          "deliveries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Delivery"
+            }
+          }
+        }
+      },
+      "Delivery": {
+        "type": "object",
+        "required": [
+          "channelType",
+          "status"
+        ],
+        "properties": {
+          "channelType": {
+            "$ref": "#/components/schemas/ChannelType"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "needs_review",
+              "reconcile_pending"
+            ]
+          },
+          "errorCode": {
+            "type": "string",
+            "enum": [
+              "OWNER_UNAVAILABLE",
+              "CHANNEL_NOT_ALLOWED",
+              "KEY_UNAVAILABLE",
+              "TARGET_UNAVAILABLE",
+              "TARGET_CHANGED",
+              "TARGET_CONFIGURATION_INVALID",
+              "REMOTE_OUTCOME_UNKNOWN",
+              "INTERRUPTED"
+            ],
+            "description": "出现错误时返回；不含上游原始响应和平台凭据"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "稳定的错误标识"
+              },
+              "message": {
+                "type": "string",
+                "description": "中文说明"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

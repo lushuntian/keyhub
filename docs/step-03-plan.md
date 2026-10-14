@@ -32,7 +32,7 @@
 - `models`：KeyHub 里的模型数组转逗号字符串
 - `group`：KeyHub 的 `group_name`
 - `tag`：KeyHub 的标签
-- `base_url`：Azure 等渠道使用
+- 不发送 `base_url`，接收平台按 `type` 使用对应渠道类型的内置地址
 - `auto_ban`：默认开启
 
 ## 完成标准

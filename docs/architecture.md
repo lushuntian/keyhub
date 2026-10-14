@@ -15,7 +15,7 @@ KeyHub 是供应商侧 Key 池管理系统，不直接参与用户请求转发�
 
 参考 `D:\new\new-api`：
 
-- `model.Channel.Type`：渠道类型。当前设计用到 OpenAI=1、Azure=3、Anthropic=14、Gemini=24、AWS=33。
+- `model.Channel.Type`：渠道类型。当前设计用到 OpenAI=1、Azure=3、Anthropic=14、Gemini=24、旧版 AWS Bedrock=33；新版 AWS Bedrock 复用 Anthropic=14。
 - `model.Channel.Key`：上游 key。AWS Bedrock 支持 `AK|SK|Region`，new-api 的 AWS adapter 也支持 `ApiKey|Region`。
 - `model.Channel.Models`：逗号分隔模型列表。
 - `model.Channel.Group`：用户分组，new-api 内部按逗号包裹匹配。

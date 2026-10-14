@@ -1,0 +1,84 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KeyHub 用户 API 接入指南</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f5f7fa;color:#1f2937;font:16px/1.8 system-ui,"Microsoft YaHei",sans-serif}main{max-width:1060px;margin:32px auto;padding:32px 48px;background:white;border:1px solid #e5e7eb;border-radius:12px}h1{font-size:30px}h2{margin-top:40px;border-top:1px solid #e5e7eb;padding-top:24px;font-size:22px}a{color:#1677ff}pre{background:#111827;color:#e5e7eb;padding:20px;border-radius:8px;overflow:auto;line-height:1.6}code{font:13px/1.6 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}p code,li code,td code{background:#f3f4f6;padding:2px 5px;border-radius:4px}.table{overflow:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;padding:10px 12px;border:1px solid #e5e7eb;min-width:100px}th{background:#f0f5ff}li{margin:8px 0}@media(max-width:700px){main{margin:0;padding:20px;border:0;border-radius:0}h1{font-size:25px}}
+</style><main><nav><a href="./#/apiAccess">返回 API 访问</a> · <a href="openapi.json">下载 OpenAPI</a></nav><h1>KeyHub 用户 API 接入指南</h1><p>版本：v1。通过脚本上传供应商密钥，由 KeyHub 发布到当前用户关联的接收平台。</p><h2>1. 开始使用</h2><p>登录 KeyHub，打开侧栏“API 访问”，创建并保存 API Token。完整 Token 只显示一次，遗失后请撤销并重新创建。</p><ul><li>KeyHub API Token 用于访问本系统；请求体中的 keys 是要上传的供应商密钥，二者不可混用。</li><li>管理员须先为用户关联已启用的接收平台。账号管理员创建的下属账号继承其平台关联。</li><li>Token 只能导入密钥、读取渠道选项、查询和重试本人批次。管理员的 Token 也不能调用管理接口或查看其他用户批次。</li><li>Token 有效期为 1–365 天，默认 90 天；每个用户最多 10 个有效 Token。页面支持撤销及查看最近使用时间。</li><li>用户禁用后 Token 立即不可用；撤销 Token 不取消已经受理的任务。任务执行前仍检查用户状态和平台权限。</li></ul><p>API 基础地址：<code>https://你的域名/api/v1</code>。部署在子路径时，在域名后保留该子路径，以“API 访问”页面展示的地址为准。生产环境通过 HTTPS 调用。</p><p>所有请求携带 <code>Authorization: Bearer kh_...</code>。JSON 请求使用 <code>Content-Type: application/json</code>。Cookie 不能作为 v1 API 的凭据。</p><p>可下载 <a href="openapi.json">OpenAPI 定义</a> 导入 Postman 等工具。</p><h2>2. 查询可选渠道</h2><p><code>GET /api/v1/key-options</code></p><pre><code>export KEYHUB_API_TOKEN='替换为你的 KeyHub API Token'
+export KEYHUB_API_BASE='https://你的域名/api/v1'
+curl &quot;$KEYHUB_API_BASE/key-options&quot; \
+  -H &quot;Authorization: Bearer $KEYHUB_API_TOKEN&quot;
+</code></pre><pre><code>{
+  &quot;items&quot;: [
+    {&quot;channelType&quot;:&quot;anthropic&quot;,&quot;models&quot;:[&quot;your-model-id&quot;],&quot;targetCount&quot;:2}
+  ],
+  &quot;limits&quot;: {
+    &quot;maxKeys&quot;:100,&quot;maxExpandedKeys&quot;:100,&quot;maxPublishTasks&quot;:500,
+    &quot;readRequestsPerMinute&quot;:120,&quot;writeRequestsPerMinute&quot;:10
+  },
+  &quot;publishingEnabled&quot;:true
+}
+</code></pre><p>仅返回当前用户获准使用的渠道类型，不公开接收平台名称、地址或凭据。<code>models</code> 是同类型任一平台的示例模型列表，不代表所有平台模型的并集；<code>targetCount</code> 是该类型关联的平台数。</p><h2>3. 提交密钥</h2><p><code>POST /api/v1/key-imports</code></p><p>必须携带 <code>Idempotency-Key</code>，由客户端为每个新批次生成并保存。建议使用 UUID。格式为 8–128 位 ASCII 字母、数字或 <code>_ . : -</code>，区分大小写。</p><div class="table"><table><thead><tr><th>字段</th><th>必填</th><th>说明</th></tr></thead><tbody><tr><td>keys</td><td>是</td><td>1–100 个非空单行字符串；每项最多 8192 字节，自动去除首尾空白</td></tr><tr><td>channelTypes</td><td>是</td><td>1–6 个不重复的渠道类型；必须全部属于当前用户可用类型</td></tr><tr><td>models</td><td>否</td><td>本次所有发布渠道的模型覆盖值；最多 200 项，每项最多 128 字节</td></tr><tr><td>awsCredentialType</td><td>条件必填</td><td>旧版 AWS 专用，值为 ak_sk 或 api_key</td></tr><tr><td>awsBedrockRegions</td><td>条件必填</td><td>新版 AWS 专用，1–20 个区域地址，每项最多 512 字节</td></tr></tbody></table></div><p>不传 <code>models</code> 或传空数组时，各接收平台使用各自的模型配置；传非空数组时覆盖本次全部发布渠道。用户不能在请求中指定密钥所有者或接收平台 ID。</p><pre><code>curl -X POST &quot;$KEYHUB_API_BASE/key-imports&quot; \
+  -H &quot;Authorization: Bearer $KEYHUB_API_TOKEN&quot; \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: example-batch-0001' \
+  --data '{&quot;keys&quot;:[&quot;SUPPLIER_KEY_1&quot;,&quot;SUPPLIER_KEY_2&quot;],&quot;channelTypes&quot;:[&quot;anthropic&quot;]}'
+</code></pre><p>首次受理返回 <code>202 Accepted</code>，表示本地密钥和后台发布任务已持久化，不表示远端发布已完成。同一用户使用相同幂等标识和相同请求重试，返回 <code>200 OK</code> 及原批次的当前状态；更换 Token 后仍可重放。</p><pre><code>{
+  &quot;id&quot;:&quot;0123456789abcdef0123456789abcdef&quot;,
+  &quot;status&quot;:&quot;queued&quot;,
+  &quot;createdAt&quot;:&quot;2026-09-18T08:00:00Z&quot;,
+  &quot;total&quot;:2,&quot;imported&quot;:2,&quot;duplicates&quot;:0,
+  &quot;publishTotal&quot;:2,&quot;succeeded&quot;:0,&quot;failed&quot;:0,&quot;needsReview&quot;:0,&quot;pending&quot;:2,
+  &quot;items&quot;:[
+    {&quot;inputIndex&quot;:0,&quot;keyId&quot;:101,&quot;importStatus&quot;:&quot;imported&quot;,&quot;deliveries&quot;:[{&quot;channelType&quot;:&quot;anthropic&quot;,&quot;status&quot;:&quot;pending&quot;}]},
+    {&quot;inputIndex&quot;:1,&quot;keyId&quot;:102,&quot;importStatus&quot;:&quot;imported&quot;,&quot;deliveries&quot;:[{&quot;channelType&quot;:&quot;anthropic&quot;,&quot;status&quot;:&quot;pending&quot;}]}
+  ]
+}
+</code></pre><p><code>inputIndex</code> 从 0 开始，对应原始 keys 数组。<code>keyId</code> 是 KeyHub 本地密钥 ID。<code>total</code> 是区域展开后的记录数；发布计数按“记录 × 平台”计算。相同渠道类型可以有多个发布结果，不暴露平台身份。</p><p>重复密钥返回 <code>importStatus: &quot;duplicate&quot;</code>，不返回既有密钥的 ID，也不创建发布任务；全局去重不改变原有密钥的所有者。需要重试已创建批次时，请使用批次重试接口。</p><h2>4. 六类渠道参数</h2><div class="table"><table><thead><tr><th>channelTypes 值</th><th>keys 中每一项的格式</th><th>额外参数</th></tr></thead><tbody><tr><td>anthropic</td><td>供应商密钥原文</td><td>无</td></tr><tr><td>openai</td><td>供应商密钥原文</td><td>无</td></tr><tr><td>azure_openai</td><td>接收平台支持的凭据原文</td><td>无</td></tr><tr><td>google_ai_studio</td><td>接收平台支持的凭据原文</td><td>无</td></tr><tr><td>aws_bedrock</td><td>AccessKey、SecretAccessKey、Region 用竖线连接，或 APIKey、Region 用竖线连接</td><td>awsCredentialType 必填</td></tr><tr><td>aws_bedrock_new</td><td>供应商密钥原文</td><td>awsBedrockRegions 必填，且该类型须单独提交</td></tr></tbody></table></div><p>前四类保持密钥原文，具体有效性由接收平台判定。可把普通示例中的 <code>channelTypes</code> 替换为对应值。</p><p>旧版 AWS AK/SK 示例：</p><pre><code>{&quot;keys&quot;:[&quot;ACCESS_KEY|SECRET_KEY|us-east-1&quot;],&quot;channelTypes&quot;:[&quot;aws_bedrock&quot;],&quot;awsCredentialType&quot;:&quot;ak_sk&quot;}
+</code></pre><p>旧版 AWS API Key 示例：</p><pre><code>{&quot;keys&quot;:[&quot;BEDROCK_API_KEY|us-east-1&quot;],&quot;channelTypes&quot;:[&quot;aws_bedrock&quot;],&quot;awsCredentialType&quot;:&quot;api_key&quot;}
+</code></pre><p>新版 AWS 示例：</p><pre><code>{
+  &quot;keys&quot;:[&quot;BEDROCK_KEY_1&quot;,&quot;BEDROCK_KEY_2&quot;],
+  &quot;channelTypes&quot;:[&quot;aws_bedrock_new&quot;],
+  &quot;awsBedrockRegions&quot;:[
+    &quot;https://bedrock-mantle.us-east-1.api.aws&quot;,
+    &quot;https://bedrock-mantle.us-west-2.api.aws&quot;
+  ]
+}
+</code></pre><p>新版按“区域 × 密钥”展开；此例产生 4 条记录。区域地址必须以 <code>https://bedrock-mantle</code> 开头。逆向接收平台将其写入渠道 base_url；最终模型会映射为 <code>anthropic.${模型ID}</code>。每条结果的 <code>baseUrl</code> 标识对应输入区域。</p><h2>5. 查询结果与重试</h2><p><code>GET /api/v1/key-imports/{id}</code> 返回与提交接口相同的批次结构。建议每 3–5 秒查询一次，直到 <code>pending</code> 为 0。</p><pre><code>curl &quot;$KEYHUB_API_BASE/key-imports/0123456789abcdef0123456789abcdef&quot; \
+  -H &quot;Authorization: Bearer $KEYHUB_API_TOKEN&quot;
+</code></pre><div class="table"><table><thead><tr><th>批次 status</th><th>含义</th></tr></thead><tbody><tr><td>queued</td><td>发布或核查任务等待执行</td></tr><tr><td>running</td><td>有任务正在执行</td></tr><tr><td>succeeded</td><td>全部发布成功，或本批全部为跳过的重复密钥</td></tr><tr><td>partial_failed</td><td>部分发布成功，部分可重试失败</td></tr><tr><td>failed</td><td>发布均失败，检查逐项错误</td></tr><tr><td>needs_review</td><td>至少一项远端结果无法确认，需要核查</td></tr></tbody></table></div><p>每个 delivery 的状态为 <code>pending</code>、<code>running</code>、<code>succeeded</code>、<code>failed</code>、<code>needs_review</code> 或 <code>reconcile_pending</code>。查询结果是截至查询时的进度；批次待处理数量归零后再判断最终结果。</p><p><code>POST /api/v1/key-imports/{id}/retry</code> 不需要请求体或 Idempotency-Key，返回 <code>202</code>。重复调用不会再次发布已成功或正在处理的任务。</p><pre><code>curl -X POST &quot;$KEYHUB_API_BASE/key-imports/0123456789abcdef0123456789abcdef/retry&quot; \
+  -H &quot;Authorization: Bearer $KEYHUB_API_TOKEN&quot;
+</code></pre><ul><li><code>failed</code>：修复权限或配置后重新尝试；执行前重新校验权限。</li><li><code>needs_review</code>：只查询远端已有结果，不再次创建渠道。new-api 逆向和采购供应商通过唯一批次标识核查；标准 API 接入缺少按外部 ID 查询的接口，无法确认时需联系管理员核实。</li><li>已受理任务不会因 HTTP 客户端断开而丢失。服务重启后继续未开始的任务，已开始但未完成的任务先核查。</li><li>远端网络调用不具备跨系统事务能力，API 不承诺远端 exactly-once。不要通过新幂等标识绕过待核查状态。</li></ul><h2>6. Python 示例</h2><p>仅使用 Python 标准库。事先在环境变量中配置 KEYHUB_API_BASE 和 KEYHUB_API_TOKEN，把真实上传数据写入本地 payload.json；不要提交该文件。</p><pre><code>import json
+import os
+import time
+import urllib.error
+import urllib.request
+
+base = os.environ[&quot;KEYHUB_API_BASE&quot;].rstrip(&quot;/&quot;)
+token = os.environ[&quot;KEYHUB_API_TOKEN&quot;]
+# 为该业务批次生成一次并持久保存；超时重试时必须沿用。
+request_id = &quot;my-supplier-batch-20260918-001&quot;
+with open(&quot;payload.json&quot;, encoding=&quot;utf-8&quot;) as f:
+    payload = json.load(f)
+
+def call(method, path, body=None, idempotency=None):
+    headers = {&quot;Authorization&quot;: &quot;Bearer &quot; + token}
+    if idempotency:
+        headers[&quot;Idempotency-Key&quot;] = idempotency
+    data = None
+    if body is not None:
+        headers[&quot;Content-Type&quot;] = &quot;application/json&quot;
+        data = json.dumps(body).encode()
+    request = urllib.request.Request(base + path, data=data,
+                                     headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        # 429 时根据 Retry-After 等待。提交超时或 5xx 时沿用原 request_id。
+        raise RuntimeError(error.read().decode()) from error
+
+job = call(&quot;POST&quot;, &quot;/key-imports&quot;, payload, request_id)
+print(&quot;批次：&quot;, job[&quot;id&quot;])
+while job[&quot;pending&quot;]:
+    time.sleep(5)
+    job = call(&quot;GET&quot;, &quot;/key-imports/&quot; + job[&quot;id&quot;])
+print(json.dumps(job, ensure_ascii=False, indent=2))
+</code></pre><h2>7. 错误与限额</h2><p>HTTP 错误统一返回：</p><pre><code>{&quot;error&quot;:{&quot;code&quot;:&quot;CHANNEL_NOT_ALLOWED&quot;,&quot;message&quot;:&quot;用户未关联所选渠道类型的已启用平台&quot;}}
+</code></pre><div class="table"><table><thead><tr><th>HTTP</th><th>code</th><th>处理方式</th></tr></thead><tbody><tr><td>400</td><td>INVALID_REQUEST / INVALID_IDEMPOTENCY_KEY / BATCH_TOO_LARGE</td><td>修正字段、幂等标识或缩小批次</td></tr><tr><td>401</td><td>INVALID_TOKEN</td><td>检查 Token、有效期、撤销状态和用户状态</td></tr><tr><td>403</td><td>CHANNEL_NOT_ALLOWED</td><td>联系管理员配置平台关联</td></tr><tr><td>404</td><td>NOT_FOUND</td><td>批次不存在或不属于当前用户</td></tr><tr><td>405</td><td>METHOD_NOT_ALLOWED</td><td>使用接口规定的方法</td></tr><tr><td>409</td><td>IDEMPOTENCY_CONFLICT</td><td>新批次用新标识；旧批次重试保持原请求</td></tr><tr><td>409</td><td>REQUEST_IN_PROGRESS</td><td>按 Retry-After 等待后重试原请求</td></tr><tr><td>429</td><td>RATE_LIMITED</td><td>按 Retry-After 等待后重试</td></tr><tr><td>500</td><td>INTERNAL_ERROR</td><td>查询原批次，或使用相同幂等标识重试提交</td></tr><tr><td>503</td><td>AUTH_REQUIRED / PUBLISHING_DISABLED / ENCRYPTION_UNAVAILABLE</td><td>联系管理员检查服务配置</td></tr></tbody></table></div><p>逐项发布错误：<code>OWNER_UNAVAILABLE</code>、<code>CHANNEL_NOT_ALLOWED</code>、<code>KEY_UNAVAILABLE</code>、<code>TARGET_UNAVAILABLE</code>、<code>TARGET_CHANGED</code>、<code>TARGET_CONFIGURATION_INVALID</code>、<code>REMOTE_OUTCOME_UNKNOWN</code>。前几项表示权限、记录或配置需要修复；<code>REMOTE_OUTCOME_UNKNOWN</code> 需核查远端结果。更改接收平台地址、接入方式、渠道类型或逆向账号后，已有任务不会自动转投新目的地。</p><ul><li>每用户每自然分钟最多 120 次读取、10 次写入，所有 Token 和服务实例共享计数。请求重放和重试也计入限额。</li><li>每次最多 100 个输入密钥、20 个区域地址、100 条展开记录、500 个发布任务，请求体不超过 2 MiB。</li><li>幂等标识在同一用户内唯一，随批次保存；当前不自动清理。数组顺序属于请求内容，重试保持顺序不变。</li><li>v1 不提供删除密钥、读取密钥明文或更改接收平台的能力。</li></ul><h2>8. 部署与运维</h2><p>部署本版本后执行迁移 <code>033_add_public_api.sql</code>；默认启动自动迁移。无需 Redis，任务和限流存储在 MySQL。</p><p>需启用 <code>KEYHUB_AUTH_ENABLED=true</code>、<code>KEYHUB_WORKER_ENABLED=true</code>，并设置稳定的 <code>KEYHUB_ENCRYPTION_KEY</code>。后台发布按数据库串行处理，各实例通过 MySQL 连接锁协调。停用 worker 时仍可查询历史批次和重放请求，但不接受新批次或重试。</p><p>运维与审计记录包含 <code>api_publish</code>、<code>api.keys.import</code>、<code>api.keys.publish</code>、<code>api.keys.retry</code>、<code>api_token.create</code>、<code>api_token.revoke</code>。Token 最近使用时间按分钟更新。批次接口不返回供应商密钥明文或接收平台内部信息。</p><h2>9. 文档与测试维护</h2><p>中文文档源文件为 docs/public-api.md；接口规范源文件为 docs/openapi.json。执行 <code>node scripts/build-api-docs.mjs</code> 生成站内静态文档，前端开发与构建时也会自动生成。</p><p>后端常规检查：<code>go test ./...</code>。集成测试通过 <code>KEYHUB_TEST_MYSQL_DSN</code> 显式指定隔离的测试 MySQL；测试会创建并删除随机命名的 keyhub_api_test_* 数据库，需要 CREATE DATABASE 权限。不要指向生产 MySQL。</p></main></html>

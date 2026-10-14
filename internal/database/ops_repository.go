@@ -174,7 +174,7 @@ func ExportKeyInventory(ctx context.Context, db *sql.DB, limit int) ([]KeyExport
 SELECT
   k.id,
   k.category_code,
-  r.category_label,
+  COALESCE(r.category_label, ''),
   k.key_hint,
   k.region,
   k.base_url,
@@ -190,7 +190,7 @@ SELECT
   k.last_error,
   k.created_at
 FROM api_keys k
-JOIN category_pool_rules r ON r.category_code = k.category_code
+LEFT JOIN category_pool_rules r ON r.category_code = k.category_code
 ORDER BY k.id DESC
 LIMIT ?`, limit)
 	if err != nil {

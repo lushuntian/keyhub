@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -15,11 +16,14 @@ type AggregationTargetRecord struct {
 	Name                      string    `json:"name"`
 	BaseURL                   string    `json:"baseUrl"`
 	ConnectionMode            string    `json:"connectionMode"`
+	ChannelType               string    `json:"channelType"`
+	Models                    []string  `json:"models"`
 	Enabled                   bool      `json:"enabled"`
-	Default                   bool      `json:"default"`
+	IsSystemDefault           bool      `json:"isSystemDefault"`
 	Source                    string    `json:"source"`
 	HasToken                  bool      `json:"hasToken"`
 	ReverseUsername           string    `json:"reverseUsername"`
+	ReverseGroupName          string    `json:"reverseGroupName"`
 	HasReversePassword        bool      `json:"hasReversePassword"`
 	CreatedAt                 time.Time `json:"createdAt"`
 	UpdatedAt                 time.Time `json:"updatedAt"`
@@ -32,11 +36,14 @@ type AggregationTargetUpsert struct {
 	Name                      string
 	BaseURL                   string
 	ConnectionMode            string
+	ChannelType               string
+	Models                    []string
 	TokenCiphertext           string
 	ReverseUsername           string
+	ReverseGroupName          string
 	ReversePasswordCiphertext string
 	Enabled                   bool
-	Default                   bool
+	IsSystemDefault           bool
 	SortOrder                 int
 }
 
@@ -47,10 +54,13 @@ SELECT
   name,
   base_url,
   COALESCE(NULLIF(connection_mode, ''), 'api'),
+  COALESCE(NULLIF(channel_type, ''), 'anthropic'),
+  models_json,
   enabled,
-  is_default,
+  is_system_default,
   token_ciphertext <> '',
   reverse_username,
+  COALESCE(NULLIF(reverse_group_name, ''), 'default'),
   COALESCE(reverse_password_ciphertext, '') <> '',
   created_at,
   updated_at
@@ -60,7 +70,7 @@ FROM aggregation_targets`
 WHERE enabled = TRUE`
 	}
 	query += `
-ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
+ORDER BY sort_order ASC, name ASC, code ASC`
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -71,6 +81,7 @@ ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
 	items := make([]AggregationTargetRecord, 0)
 	for rows.Next() {
 		var item AggregationTargetRecord
+		var modelsJSON []byte
 		var hasToken int
 		var hasReversePassword int
 		if err := rows.Scan(
@@ -78,10 +89,13 @@ ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
 			&item.Name,
 			&item.BaseURL,
 			&item.ConnectionMode,
+			&item.ChannelType,
+			&modelsJSON,
 			&item.Enabled,
-			&item.Default,
+			&item.IsSystemDefault,
 			&hasToken,
 			&item.ReverseUsername,
+			&item.ReverseGroupName,
 			&hasReversePassword,
 			&item.CreatedAt,
 			&item.UpdatedAt,
@@ -91,6 +105,9 @@ ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
 		item.HasToken = hasToken > 0
 		item.HasReversePassword = hasReversePassword > 0
 		item.Source = "database"
+		if err := decodeAggregationTargetModels(modelsJSON, &item); err != nil {
+			return nil, fmt.Errorf("decode aggregation target %s models: %w", item.Code, err)
+		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -106,10 +123,13 @@ SELECT
   name,
   base_url,
   COALESCE(NULLIF(connection_mode, ''), 'api'),
+  COALESCE(NULLIF(channel_type, ''), 'anthropic'),
+  models_json,
   enabled,
-  is_default,
+  is_system_default,
   token_ciphertext <> '',
   reverse_username,
+  COALESCE(NULLIF(reverse_group_name, ''), 'default'),
   COALESCE(reverse_password_ciphertext, '') <> '',
   created_at,
   updated_at,
@@ -121,7 +141,7 @@ FROM aggregation_targets`
 WHERE enabled = TRUE`
 	}
 	query += `
-ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
+ORDER BY sort_order ASC, name ASC, code ASC`
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -132,6 +152,7 @@ ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
 	items := make([]AggregationTargetRecord, 0)
 	for rows.Next() {
 		var item AggregationTargetRecord
+		var modelsJSON []byte
 		var hasToken int
 		var hasReversePassword int
 		if err := rows.Scan(
@@ -139,10 +160,13 @@ ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
 			&item.Name,
 			&item.BaseURL,
 			&item.ConnectionMode,
+			&item.ChannelType,
+			&modelsJSON,
 			&item.Enabled,
-			&item.Default,
+			&item.IsSystemDefault,
 			&hasToken,
 			&item.ReverseUsername,
+			&item.ReverseGroupName,
 			&hasReversePassword,
 			&item.CreatedAt,
 			&item.UpdatedAt,
@@ -154,6 +178,9 @@ ORDER BY is_default DESC, sort_order ASC, name ASC, code ASC`
 		item.HasToken = hasToken > 0
 		item.HasReversePassword = hasReversePassword > 0
 		item.Source = "database"
+		if err := decodeAggregationTargetModels(modelsJSON, &item); err != nil {
+			return nil, fmt.Errorf("decode aggregation target %s models: %w", item.Code, err)
+		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -172,6 +199,7 @@ func CountAggregationTargets(ctx context.Context, db *sql.DB) (int, error) {
 
 func GetAggregationTarget(ctx context.Context, db *sql.DB, code string) (AggregationTargetRecord, error) {
 	var item AggregationTargetRecord
+	var modelsJSON []byte
 	var hasToken int
 	var hasReversePassword int
 	err := db.QueryRowContext(ctx, `
@@ -180,10 +208,13 @@ SELECT
   name,
   base_url,
   COALESCE(NULLIF(connection_mode, ''), 'api'),
+  COALESCE(NULLIF(channel_type, ''), 'anthropic'),
+  models_json,
   enabled,
-  is_default,
+  is_system_default,
   token_ciphertext <> '',
   reverse_username,
+  COALESCE(NULLIF(reverse_group_name, ''), 'default'),
   COALESCE(reverse_password_ciphertext, '') <> '',
   created_at,
   updated_at,
@@ -195,10 +226,13 @@ WHERE code = ?`, code).Scan(
 		&item.Name,
 		&item.BaseURL,
 		&item.ConnectionMode,
+		&item.ChannelType,
+		&modelsJSON,
 		&item.Enabled,
-		&item.Default,
+		&item.IsSystemDefault,
 		&hasToken,
 		&item.ReverseUsername,
+		&item.ReverseGroupName,
 		&hasReversePassword,
 		&item.CreatedAt,
 		&item.UpdatedAt,
@@ -214,10 +248,17 @@ WHERE code = ?`, code).Scan(
 	item.HasToken = hasToken > 0
 	item.HasReversePassword = hasReversePassword > 0
 	item.Source = "database"
+	if err := decodeAggregationTargetModels(modelsJSON, &item); err != nil {
+		return item, fmt.Errorf("decode aggregation target %s models: %w", item.Code, err)
+	}
 	return item, nil
 }
 
 func SaveAggregationTarget(ctx context.Context, db *sql.DB, target AggregationTargetUpsert) error {
+	modelsJSON, err := json.Marshal(target.Models)
+	if err != nil {
+		return fmt.Errorf("encode aggregation target models: %w", err)
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin save aggregation target: %w", err)
@@ -228,44 +269,65 @@ func SaveAggregationTarget(ctx context.Context, db *sql.DB, target AggregationTa
 		}
 	}()
 
-	if target.Default {
-		if _, err = tx.ExecContext(ctx, `UPDATE aggregation_targets SET is_default = FALSE`); err != nil {
-			return fmt.Errorf("clear aggregation target defaults: %w", err)
+	if target.IsSystemDefault {
+		if _, err = tx.ExecContext(ctx, `
+UPDATE aggregation_targets
+SET is_system_default = FALSE
+WHERE code <> ? AND is_system_default = TRUE`, target.Code); err != nil {
+			return fmt.Errorf("clear previous system default aggregation target: %w", err)
 		}
 	}
+
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO aggregation_targets
-  (code, name, base_url, connection_mode, token_ciphertext, reverse_username, reverse_password_ciphertext, enabled, is_default, sort_order)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  (code, name, base_url, connection_mode, channel_type, models_json, token_ciphertext, reverse_username, reverse_group_name, reverse_password_ciphertext, enabled, is_system_default, sort_order)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   base_url = VALUES(base_url),
   connection_mode = VALUES(connection_mode),
+  channel_type = VALUES(channel_type),
+  models_json = VALUES(models_json),
   token_ciphertext = VALUES(token_ciphertext),
   reverse_username = VALUES(reverse_username),
+  reverse_group_name = VALUES(reverse_group_name),
   reverse_password_ciphertext = VALUES(reverse_password_ciphertext),
   enabled = VALUES(enabled),
-  is_default = VALUES(is_default),
+  is_system_default = VALUES(is_system_default),
   sort_order = VALUES(sort_order)`,
 		target.Code,
 		target.Name,
 		target.BaseURL,
 		target.ConnectionMode,
+		target.ChannelType,
+		string(modelsJSON),
 		target.TokenCiphertext,
 		target.ReverseUsername,
+		target.ReverseGroupName,
 		target.ReversePasswordCiphertext,
 		target.Enabled,
-		target.Default,
+		target.IsSystemDefault,
 		target.SortOrder,
 	)
 	if err != nil {
 		return fmt.Errorf("save aggregation target: %w", err)
 	}
-	if err = ensureAggregationTargetDefaultTx(ctx, tx); err != nil {
-		return err
-	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit save aggregation target: %w", err)
+	}
+	return nil
+}
+
+func decodeAggregationTargetModels(raw []byte, target *AggregationTargetRecord) error {
+	if len(raw) == 0 {
+		target.Models = []string{}
+		return nil
+	}
+	if err := json.Unmarshal(raw, &target.Models); err != nil {
+		return err
+	}
+	if target.Models == nil {
+		target.Models = []string{}
 	}
 	return nil
 }
@@ -292,43 +354,8 @@ func DeleteAggregationTarget(ctx context.Context, db *sql.DB, code string) error
 	if affected == 0 {
 		return ErrAggregationTargetNotFound
 	}
-	if err = ensureAggregationTargetDefaultTx(ctx, tx); err != nil {
-		return err
-	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("commit delete aggregation target: %w", err)
-	}
-	return nil
-}
-
-func ensureAggregationTargetDefaultTx(ctx context.Context, tx *sql.Tx) error {
-	var code string
-	err := tx.QueryRowContext(ctx, `
-SELECT code
-FROM aggregation_targets
-WHERE enabled = TRUE AND is_default = TRUE
-ORDER BY sort_order ASC, name ASC, code ASC
-LIMIT 1`).Scan(&code)
-	if err == nil {
-		return nil
-	}
-	if err != sql.ErrNoRows {
-		return fmt.Errorf("check aggregation target default: %w", err)
-	}
-	err = tx.QueryRowContext(ctx, `
-SELECT code
-FROM aggregation_targets
-WHERE enabled = TRUE
-ORDER BY sort_order ASC, name ASC, code ASC
-LIMIT 1`).Scan(&code)
-	if err == sql.ErrNoRows {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("find aggregation target default: %w", err)
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE aggregation_targets SET is_default = TRUE WHERE code = ?`, code); err != nil {
-		return fmt.Errorf("set aggregation target default: %w", err)
 	}
 	return nil
 }

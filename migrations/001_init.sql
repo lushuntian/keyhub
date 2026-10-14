@@ -122,8 +122,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 INSERT INTO category_pool_rules
   (category_code, category_label, newapi_type, default_models_json, keep_alive_target, refill_enabled, sort_order)
 VALUES
-  ('aws_bedrock', 'AWS Bedrock', 33, JSON_ARRAY('claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8'), 0, FALSE, 10),
-  ('anthropic', 'Anthropic 官方', 14, JSON_ARRAY('claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8'), 0, FALSE, 30),
+  ('aws_bedrock', 'AWS Bedrock', 33, JSON_ARRAY('claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-fable-5', 'claude-sonnet-5'), 0, FALSE, 10),
+  ('anthropic', 'Anthropic 官方', 14, JSON_ARRAY('claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-opus-4-6', 'claude-fable-5', 'claude-sonnet-5'), 0, FALSE, 30),
   ('openai', 'OpenAI', 1, JSON_ARRAY('gpt-4.1', 'gpt-4o', 'o3'), 0, FALSE, 40),
   ('azure_openai', 'Azure OpenAI', 3, JSON_ARRAY('gpt-4.1', 'gpt-4o'), 0, FALSE, 50),
   ('google_ai_studio', 'Google AI Studio', 24, JSON_ARRAY('gemini-2.5-pro', 'gemini-2.5-flash'), 0, FALSE, 60)

@@ -13,8 +13,10 @@ import (
 )
 
 const (
+	ChannelStatusUnknown          = 0
 	ChannelStatusEnabled          = 1
 	ChannelStatusManuallyDisabled = 2
+	ChannelStatusAutoDisabled     = 3
 )
 
 type Client struct {
@@ -34,11 +36,12 @@ type ChannelPayload struct {
 	ID            int64   `json:"id,omitempty"`
 	Type          int     `json:"type,omitempty"`
 	Key           string  `json:"key,omitempty"`
+	BaseURL       string  `json:"base_url,omitempty"`
 	Status        int     `json:"status,omitempty"`
 	Name          string  `json:"name,omitempty"`
 	Models        string  `json:"models,omitempty"`
+	ModelMapping  string  `json:"model_mapping,omitempty"`
 	Group         string  `json:"group,omitempty"`
-	BaseURL       *string `json:"base_url,omitempty"`
 	Other         string  `json:"other,omitempty"`
 	Tag           *string `json:"tag,omitempty"`
 	Setting       *string `json:"setting,omitempty"`
@@ -70,6 +73,7 @@ type PushChannelResponse struct {
 type ChannelUsage struct {
 	ChannelID    int64 `json:"channel_id"`
 	UsedQuota    int64 `json:"used_quota"`
+	Status       int   `json:"status,omitempty"`
 	RequestCount int64 `json:"request_count,omitempty"`
 }
 

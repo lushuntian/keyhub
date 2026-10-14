@@ -10,13 +10,16 @@ import (
 )
 
 type AggregationTarget struct {
-	Code            string `json:"code"`
-	Name            string `json:"name"`
-	BaseURL         string `json:"baseUrl"`
-	Token           string `json:"token"`
-	ConnectionMode  string `json:"connectionMode,omitempty"`
-	ReverseUsername string `json:"reverseUsername,omitempty"`
-	ReversePassword string `json:"reversePassword,omitempty"`
+	Code             string   `json:"code"`
+	Name             string   `json:"name"`
+	BaseURL          string   `json:"baseUrl"`
+	Token            string   `json:"token"`
+	ConnectionMode   string   `json:"connectionMode,omitempty"`
+	ChannelType      string   `json:"channelType,omitempty"`
+	Models           []string `json:"models,omitempty"`
+	ReverseUsername  string   `json:"reverseUsername,omitempty"`
+	ReverseGroupName string   `json:"reverseGroupName,omitempty"`
+	ReversePassword  string   `json:"reversePassword,omitempty"`
 }
 
 type Config struct {
@@ -49,7 +52,7 @@ func Load() Config {
 	return Config{
 		Environment:         getEnv("KEYHUB_ENV", "development"),
 		HTTPAddr:            getEnv("KEYHUB_HTTP_ADDR", ":8080"),
-		DatabaseDSN:         getEnv("KEYHUB_DATABASE_DSN", "keyhub:keyhub@tcp(127.0.0.1:3306)/keyhub?parseTime=true&loc=Local&charset=utf8mb4,utf8"),
+		DatabaseDSN:         getEnv("KEYHUB_DATABASE_DSN", "keyhub:keyhub@tcp(127.0.0.1:3306)/keyhub?parseTime=true&loc=UTC&time_zone=%27%2B00%3A00%27&charset=utf8mb4,utf8"),
 		MigrationsDir:       getEnv("KEYHUB_MIGRATIONS_DIR", "migrations"),
 		StaticDir:           getEnv("KEYHUB_STATIC_DIR", "web/dist"),
 		AutoMigrate:         getBoolEnv("KEYHUB_AUTO_MIGRATE", true),
@@ -65,9 +68,9 @@ func Load() Config {
 		BootstrapPassword:   os.Getenv("KEYHUB_BOOTSTRAP_ADMIN_PASSWORD"),
 		SessionTTL:          getDurationEnv("KEYHUB_SESSION_TTL", 24*time.Hour),
 		CookieSecure:        getBoolEnv("KEYHUB_COOKIE_SECURE", false),
-		WorkerEnabled:       getBoolEnv("KEYHUB_WORKER_ENABLED", false),
+		WorkerEnabled:       getBoolEnv("KEYHUB_WORKER_ENABLED", true),
 		HealthCheckEvery:    getDurationEnv("KEYHUB_HEALTH_CHECK_INTERVAL", 30*time.Minute),
-		UsageSyncEvery:      getDurationEnv("KEYHUB_USAGE_SYNC_INTERVAL", 15*time.Minute),
+		UsageSyncEvery:      getDurationEnv("KEYHUB_USAGE_SYNC_INTERVAL", time.Minute),
 	}
 }
 
@@ -126,9 +129,27 @@ func parseAggregationTargets(raw string, fallbackBaseURL string, fallbackToken s
 		target.BaseURL = strings.TrimRight(strings.TrimSpace(target.BaseURL), "/")
 		target.Token = strings.TrimSpace(target.Token)
 		target.ConnectionMode = strings.TrimSpace(target.ConnectionMode)
+		if target.ConnectionMode == "" {
+			target.ConnectionMode = "api"
+		}
+		target.ChannelType = strings.TrimSpace(target.ChannelType)
+		if target.ChannelType == "" {
+			target.ChannelType = "anthropic"
+		}
+		target.Models = cleanAggregationTargetModels(target.Models)
 		target.ReverseUsername = strings.TrimSpace(target.ReverseUsername)
+		target.ReverseGroupName = normalizeReverseGroupName(target.ReverseGroupName)
 		target.ReversePassword = strings.TrimSpace(target.ReversePassword)
-		if target.Code == "" || target.BaseURL == "" || target.Token == "" {
+		hasCredentials := false
+		switch target.ConnectionMode {
+		case "api":
+			hasCredentials = target.Token != ""
+		case "new_api_reverse", "token_supply":
+			hasCredentials = target.ReverseUsername != "" && target.ReversePassword != ""
+		default:
+			hasCredentials = target.Token != ""
+		}
+		if target.Code == "" || target.BaseURL == "" || !hasCredentials {
 			continue
 		}
 		if target.Name == "" {
@@ -141,6 +162,31 @@ func parseAggregationTargets(raw string, fallbackBaseURL string, fallbackToken s
 		cleaned = append(cleaned, target)
 	}
 	return cleaned
+}
+
+func cleanAggregationTargetModels(models []string) []string {
+	cleaned := make([]string, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, exists := seen[model]; exists {
+			continue
+		}
+		seen[model] = struct{}{}
+		cleaned = append(cleaned, model)
+	}
+	return cleaned
+}
+
+func normalizeReverseGroupName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "default"
+	}
+	return value
 }
 
 func getEnv(key string, fallback string) string {
